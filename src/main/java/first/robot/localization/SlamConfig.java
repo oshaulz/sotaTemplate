@@ -1,5 +1,8 @@
 package first.robot.localization;
 
+import first.robot.generated.TunerConstants;
+import org.wpilib.math.util.Units;
+
 /**
  * Tuning parameters for {@link SlamEstimator}. All standard deviations are 1σ, in meters or
  * radians. The defaults are reasonable for a Kraken/Pigeon 2 swerve with global-shutter AprilTag
@@ -59,6 +62,29 @@ public final class SlamConfig implements Cloneable {
    * as they wear; set to a tiny value to disable the calibration.
    */
   public double odometryScaleStdDev = 0.05;
+
+  /**
+   * The wheel radius the drivetrain is configured with. The odometry scale is the true radius over
+   * this one, so it bounds the scale.
+   */
+  public double wheelRadiusMeters = TunerConstants.FrontLeft.WheelRadius;
+
+  /**
+   * The most the true wheel radius can differ from {@link #wheelRadiusMeters}. The solved scale is
+   * clamped to (r ± this) / r. The default is about the most a tread wears before replacement (1.96
+   * in to 1.7 in).
+   */
+  public double maxWheelRadiusChangeMeters = Units.inchesToMeters(0.26);
+
+  /** Smallest odometry scale the solve may settle on: a fully worn wheel. */
+  public double minOdometryScale() {
+    return (wheelRadiusMeters - maxWheelRadiusChangeMeters) / wheelRadiusMeters;
+  }
+
+  /** Largest odometry scale the solve may settle on: fresh tread on a wheel measured worn. */
+  public double maxOdometryScale() {
+    return (wheelRadiusMeters + maxWheelRadiusChangeMeters) / wheelRadiusMeters;
+  }
 
   /**
    * Rotation noise for odometry heading deltas. Only used while the gyro is disconnected, since the

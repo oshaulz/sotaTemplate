@@ -990,7 +990,8 @@ public class SlamEstimator {
             kf.theta = ths[i].value();
           }
           gyroOffset = offset.value();
-          odometryScale = scale.value();
+          odometryScale =
+              Math.clamp(scale.value(), config.minOdometryScale(), config.maxOdometryScale());
           if (config.mapTags) {
             for (var entry : active.entrySet()) {
               Variable[] v = lmVars.get(entry.getKey());
