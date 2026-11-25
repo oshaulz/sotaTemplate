@@ -2,8 +2,6 @@
 
 A opinionated 2027 (Systemcore) FIRST Robotics Competition template
 
-<br>
-
 > [!IMPORTANT]
 > This is in beta, and has never been tested on a real robot
 
