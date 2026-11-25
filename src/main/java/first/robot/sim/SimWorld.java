@@ -5,6 +5,7 @@ import first.robot.subsystems.drive.ModuleIOSim;
 import org.littletonrobotics.junction.Logger;
 import org.wpilib.math.geometry.Pose2d;
 import org.wpilib.math.geometry.Rotation2d;
+import org.wpilib.math.geometry.Translation2d;
 import org.wpilib.math.geometry.Twist2d;
 import org.wpilib.math.kinematics.SwerveDriveKinematics;
 import org.wpilib.math.kinematics.SwerveModulePosition;
@@ -39,6 +40,8 @@ public class SimWorld {
   private double yawRate = 0.0;
   private double elapsed = 0.0;
   private volatile boolean held = false;
+  private Translation2d lastVelocity = Translation2d.ZERO;
+  private Translation2d acceleration = Translation2d.ZERO;
 
   /**
    * @param startPose Where the robot is placed on the field at boot.
@@ -53,29 +56,36 @@ public class SimWorld {
 
   /** Advances the world by one robot loop. Call before reading any sensors. */
   public void step() {
-    if (held) {
-      // Pinned: wheels and chassis don't move, time still passes
-      yawRate = 0.0;
-      elapsed += DT;
-      Logger.recordOutput("SimWorld/TruePose", truePose);
-      return;
-    }
     for (var module : modules) {
       module.step(DT);
     }
     SwerveModulePosition[] positions = truePositions();
     Twist2d twist = kinematics.toTwist2d(lastPositions, positions);
     lastPositions = positions;
+    if (held) {
+      // Pinned: the wheels spin against the carpet, so wheel odometry reports motion that never
+      // happens. The chassis stays put.
+      twist = new Twist2d(0.0, 0.0, 0.0);
+    }
 
     truePose = truePose.plus(twist.exp());
     trueYawContinuous += twist.dtheta;
     yawRate = twist.dtheta / DT;
     elapsed += DT;
 
+    // What an IMU feels, in the robot frame: the change in robot-frame velocity
+    Translation2d velocity = new Translation2d(twist.dx / DT, twist.dy / DT);
+    acceleration = velocity.minus(lastVelocity.rotateBy(new Rotation2d(-twist.dtheta))).div(DT);
+    lastVelocity = velocity;
+
     Logger.recordOutput("SimWorld/TruePose", truePose);
+    Logger.recordOutput("SimWorld/Held", held);
   }
 
-  /** Pins the robot in place (a defender, a wall), for testing how commands cope. */
+  /**
+   * Pins the robot in place (a defender, a wall), for testing how commands cope. The wheels keep
+   * turning, so the robot slips.
+   */
   public void setHeld(boolean held) {
     this.held = held;
   }
@@ -97,6 +107,11 @@ public class SimWorld {
 
   public double getTrueYawRateRadPerSec() {
     return yawRate;
+  }
+
+  /** True robot-frame acceleration over the last step, as an IMU would measure it. */
+  public Translation2d getTrueAccelerationMetersPerSec2() {
+    return acceleration;
   }
 
   /** Starting pose used in simulation: on the blue starting line, facing the field. */

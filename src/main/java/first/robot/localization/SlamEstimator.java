@@ -83,6 +83,13 @@ public class SlamEstimator {
     final double gyroYaw;
     final boolean gyroValid;
     final List<TagObservation> observations = new ArrayList<>();
+
+    /** Total wheel travel since boot at this keyframe, m. */
+    double travel;
+
+    /** Total wheel travel while slipping since boot at this keyframe, m. */
+    double slipTravel;
+
     double x;
     double y;
     double theta;
@@ -101,6 +108,8 @@ public class SlamEstimator {
     Keyframe copy() {
       Keyframe c = new Keyframe(timestamp, odometry, gyroYaw, gyroValid);
       c.observations.addAll(observations);
+      c.travel = travel;
+      c.slipTravel = slipTravel;
       c.x = x;
       c.y = y;
       c.theta = theta;
@@ -223,6 +232,11 @@ public class SlamEstimator {
   private final TimeInterpolatableBuffer<Pose2d> odometryBuffer;
   private final TimeInterpolatableBuffer<Double> gyroBuffer;
   private final TreeMap<Double, Boolean> gyroValidHistory = new TreeMap<>();
+  private final TimeInterpolatableBuffer<Double> travelBuffer;
+  private final TimeInterpolatableBuffer<Double> slipTravelBuffer;
+  private double totalTravel = 0.0;
+  private double totalSlipTravel = 0.0;
+  private boolean latestSlipping = false;
   private double latestTimestamp = Double.NEGATIVE_INFINITY;
   private Pose2d latestOdometry = Pose2d.ZERO;
   private double latestGyroYaw = 0.0;
@@ -278,6 +292,8 @@ public class SlamEstimator {
     }
     odometryBuffer = TimeInterpolatableBuffer.createBuffer(config.historySecs);
     gyroBuffer = TimeInterpolatableBuffer.createDoubleBuffer(config.historySecs);
+    travelBuffer = TimeInterpolatableBuffer.createDoubleBuffer(config.historySecs);
+    slipTravelBuffer = TimeInterpolatableBuffer.createDoubleBuffer(config.historySecs);
     anchorVarTrans = sq(config.unknownStdDevMeters);
     anchorVarRot = sq(config.unknownStdDevRad);
   }
@@ -312,9 +328,40 @@ public class SlamEstimator {
    */
   public void addOdometry(
       double timestamp, Pose2d odometryPose, double gyroYawRad, boolean gyroValid) {
+    addOdometry(timestamp, odometryPose, gyroYawRad, gyroValid, false);
+  }
+
+  /**
+   * Adds a high-rate odometry sample. Samples must arrive in time order.
+   *
+   * @param timestamp Sample time in seconds.
+   * @param odometryPose Wheel odometry pose (any frame; only deltas are used). Its heading should
+   *     come from the gyro while the gyro is connected.
+   * @param gyroYawRad Continuous (unwrapped) gyro yaw.
+   * @param gyroValid Whether the gyro is connected.
+   * @param slipping Whether the wheels were slipping (or the robot was hit) at this sample. Wheel
+   *     travel while slipping is trusted far less ({@link SlamConfig#slipStdDevPerMeter}), and a
+   *     keyframe is placed where slipping starts and stops so it is confined to its own factor.
+   */
+  public void addOdometry(
+      double timestamp,
+      Pose2d odometryPose,
+      double gyroYawRad,
+      boolean gyroValid,
+      boolean slipping) {
     if (timestamp <= latestTimestamp) {
       return;
     }
+    double step =
+        keyframes.isEmpty()
+            ? 0.0
+            : odometryPose.getTranslation().getDistance(latestOdometry.getTranslation());
+    totalTravel += step;
+    if (slipping) totalSlipTravel += step;
+    travelBuffer.addSample(timestamp, totalTravel);
+    slipTravelBuffer.addSample(timestamp, totalSlipTravel);
+    boolean slipChanged = slipping != latestSlipping;
+    latestSlipping = slipping;
     odometryBuffer.addSample(timestamp, odometryPose);
     gyroBuffer.addSample(timestamp, gyroYawRad);
     gyroValidHistory.put(timestamp, gyroValid);
@@ -329,6 +376,8 @@ public class SlamEstimator {
       kf.x = odometryPose.getX();
       kf.y = odometryPose.getY();
       kf.theta = gyroValid ? gyroYawRad + gyroOffset : odometryPose.getRotation().getRadians();
+      kf.travel = totalTravel;
+      kf.slipTravel = totalSlipTravel;
       keyframes.add(kf);
       setAnchorFrom(kf, anchorVarTrans, anchorVarRot);
       return;
@@ -339,7 +388,7 @@ public class SlamEstimator {
     boolean moved = delta.getTranslation().getNorm() > config.odometryKeyframeDistanceMeters;
     boolean turned = Math.abs(delta.getRotation().getRadians()) > config.odometryKeyframeAngleRad;
     boolean stale = timestamp - newest.timestamp > config.odometryKeyframeIntervalSecs;
-    if (moved || turned || stale) {
+    if (moved || turned || stale || slipChanged) {
       insertKeyframe(timestamp);
     }
   }
@@ -393,6 +442,8 @@ public class SlamEstimator {
       gyroOffset = pose.getRotation().getRadians() - latestGyroYaw;
     }
     Keyframe kf = new Keyframe(latestTimestamp, latestOdometry, latestGyroYaw, latestGyroValid);
+    kf.travel = totalTravel;
+    kf.slipTravel = totalSlipTravel;
     kf.setPose(pose);
     keyframes.add(kf);
     setAnchorFrom(kf, sq(config.resetStdDevMeters), sq(config.resetStdDevRad));
@@ -870,8 +921,8 @@ public class SlamEstimator {
           Keyframe b = keyframes.get(i);
           Transform2d delta = new Transform2d(a.odometry, b.odometry);
           double dist = delta.getTranslation().getNorm();
-          double transVar =
-              sq(config.odometryStdDevBaseMeters + config.odometryStdDevPerMeter * dist);
+          double transVar = odometryVariance(config, dist, b.slipTravel - a.slipTravel);
+          double keep = slipKeep(config, b.travel - a.travel, b.slipTravel - a.slipTravel);
 
           Variable c = Variable.cos(ths[i - 1]);
           Variable s = Variable.sin(ths[i - 1]);
@@ -879,8 +930,8 @@ public class SlamEstimator {
           Variable ey = ys[i].minus(ys[i - 1]);
           Variable px = c.times(ex).plus(s.times(ey));
           Variable py = c.times(ey).minus(s.times(ex));
-          terms.add(sq(px.minus(scale.times(delta.getX()))).div(transVar));
-          terms.add(sq(py.minus(scale.times(delta.getY()))).div(transVar));
+          terms.add(sq(px.minus(scale.times(delta.getX() * keep))).div(transVar));
+          terms.add(sq(py.minus(scale.times(delta.getY() * keep))).div(transVar));
 
           if (!a.gyroValid || !b.gyroValid) {
             double dTheta = delta.getRotation().getRadians();
@@ -1090,8 +1141,7 @@ public class SlamEstimator {
       double dist = new Transform2d(removed.odometry, next.odometry).getTranslation().getNorm();
       double dt = next.timestamp - removed.timestamp;
       varTrans =
-          anchorVarTrans
-              + sq(config.odometryStdDevBaseMeters + config.odometryStdDevPerMeter * dist);
+          anchorVarTrans + odometryVariance(config, dist, next.slipTravel - removed.slipTravel);
       varRot = anchorVarRot + sq(config.gyroDriftStdDevPerSqrtSec) * dt;
     }
     setAnchorFrom(
@@ -1132,7 +1182,15 @@ public class SlamEstimator {
       return latestOdometry;
     }
     Keyframe newest = keyframes.get(keyframes.size() - 1);
-    Pose2d pose = newest.pose().transformBy(scaledDelta(newest.odometry, latestOdometry));
+    Pose2d pose =
+        newest
+            .pose()
+            .transformBy(
+                trustedDelta(
+                    newest,
+                    latestOdometry,
+                    totalTravel - newest.travel,
+                    totalSlipTravel - newest.slipTravel));
     if (latestGyroValid) {
       pose = new Pose2d(pose.getTranslation(), new Rotation2d(latestGyroYaw + gyroOffset));
     }
@@ -1149,7 +1207,16 @@ public class SlamEstimator {
     Keyframe base = ref;
     return odometryBuffer
         .getSample(timestamp)
-        .map(odom -> base.pose().transformBy(scaledDelta(base.odometry, odom)));
+        .map(
+            odom ->
+                base.pose()
+                    .transformBy(
+                        trustedDelta(
+                            base,
+                            odom,
+                            travelBuffer.getSample(timestamp).orElse(totalTravel) - base.travel,
+                            slipTravelBuffer.getSample(timestamp).orElse(totalSlipTravel)
+                                - base.slipTravel)));
   }
 
   /** Returns the localization status. */
@@ -1260,12 +1327,15 @@ public class SlamEstimator {
     boolean gyroValid = validEntry != null ? validEntry.getValue() : latestGyroValid;
 
     Keyframe kf = new Keyframe(timestamp, odom.get(), gyro.get(), gyroValid);
+    kf.travel = travelBuffer.getSample(timestamp).orElse(totalTravel);
+    kf.slipTravel = slipTravelBuffer.getSample(timestamp).orElse(totalSlipTravel);
     int index = 0;
     while (index < keyframes.size() && keyframes.get(index).timestamp < timestamp) {
       index++;
     }
     Keyframe ref = keyframes.get(Math.max(0, index - 1));
-    Transform2d delta = scaledDelta(ref.odometry, kf.odometry);
+    Transform2d delta =
+        trustedDelta(ref, kf.odometry, kf.travel - ref.travel, kf.slipTravel - ref.slipTravel);
     kf.setPose(ref.pose().transformBy(delta));
     // Keep heading continuous with the gyro (or the previous keyframe) rather than wrapped
     kf.theta = gyroValid ? gyro.get() + gyroOffset : ref.theta + delta.getRotation().getRadians();
@@ -1302,8 +1372,12 @@ public class SlamEstimator {
     double py = -Math.sin(camYaw) * rx + Math.cos(camYaw) * ry;
 
     // Inflate by the current pose uncertainty so a robot that has been dead reckoning for a while
-    // can still re-acquire
-    double poseStd = Math.sqrt(anchorVarTrans) + Math.hypot(px, py) * Math.sqrt(anchorVarRot);
+    // can still re-acquire. That includes slip since the last sighting: after being pinned or hit
+    // the pose may be well off, and these are exactly the sightings that will fix it.
+    double poseStd =
+        Math.sqrt(anchorVarTrans)
+            + Math.hypot(px, py) * Math.sqrt(anchorVarRot)
+            + slipStdDevSinceFix(kf);
     if (lm.searchRemaining > 0) {
       // This tag was just declared moved: look for it anywhere nearby
       poseStd += config.movedTagSearchRadiusMeters / config.outlierGateSigma;
@@ -1408,6 +1482,22 @@ public class SlamEstimator {
   }
 
   /** Odometry motion from a to b, in a's frame, with the solved wheel scale applied. */
+  /**
+   * Odometry motion from a keyframe to a later odometry pose, with the solved wheel scale applied
+   * and slipping travel discounted ({@link SlamConfig#slipOdometryTrust}).
+   */
+  private Transform2d trustedDelta(Keyframe from, Pose2d to, double travel, double slipTravel) {
+    Transform2d delta = scaledDelta(from.odometry, to);
+    double keep = slipKeep(config, travel, slipTravel);
+    return new Transform2d(delta.getTranslation().times(keep), delta.getRotation());
+  }
+
+  /** How much of a stretch of wheel travel to believe, given how much of it was slipping. */
+  private static double slipKeep(SlamConfig config, double travel, double slipTravel) {
+    if (travel <= 1e-9) return 1.0;
+    return 1.0 - (1.0 - config.slipOdometryTrust) * Math.min(1.0, slipTravel / travel);
+  }
+
   private Transform2d scaledDelta(Pose2d a, Pose2d b) {
     Transform2d delta = new Transform2d(a, b);
     return new Transform2d(delta.getTranslation().times(odometryScale), delta.getRotation());
@@ -1419,6 +1509,107 @@ public class SlamEstimator {
     anchorTheta = kf.theta;
     anchorVarTrans = varTrans;
     anchorVarRot = varRot;
+  }
+
+  /**
+   * Variance of a wheel-odometry translation: the normal noise model, plus a much larger term for
+   * whatever part of it was driven while slipping.
+   */
+  private static double odometryVariance(SlamConfig config, double dist, double slipDist) {
+    return sq(config.odometryStdDevBaseMeters + config.odometryStdDevPerMeter * dist)
+        + sq(config.slipStdDevPerMeter * slipDist);
+  }
+
+  /**
+   * Approximate 1σ uncertainty of the current position estimate, in meters. This is not the
+   * solver's posterior (that would need the full covariance): each keyframe in the window that saw
+   * tags pins the robot down by as much as those sightings can, grown by the odometry noise model
+   * (slip included) for everything driven since, and those independent fixes are fused. Before any
+   * tag it grows from the reset or unknown pose.
+   */
+  public double getPositionStdDevMeters() {
+    if (status == Status.UNKNOWN || keyframes.isEmpty()) {
+      return config.unknownStdDevMeters;
+    }
+    // Fuse each tag-seeing keyframe's fix, carried forward to the newest one that saw tags
+    Keyframe newestFix = visionReference();
+    double info = 0.0;
+    if (newestFix != null) {
+      for (var kf : keyframes) {
+        if (kf.timestamp > newestFix.timestamp) break;
+        double sightings = 0.0;
+        for (var obs : kf.observations) {
+          sightings += observationInfo(obs, 0.0)[0] / config.marginalizationInfoScale;
+        }
+        if (sightings > 0.0) {
+          info +=
+              1.0
+                  / (1.0 / sightings
+                      + odometryVariance(
+                          config,
+                          newestFix.travel - kf.travel,
+                          newestFix.slipTravel - kf.slipTravel));
+        }
+      }
+    }
+    double var;
+    Keyframe ref;
+    if (info > 0.0) {
+      // Tags themselves are only known so well
+      var = 1.0 / info + sq(config.tagMinStdDevMeters);
+      ref = newestFix;
+    } else {
+      ref = keyframes.get(0);
+      var = anchorVarTrans;
+    }
+    // Everything driven since is shared by every fix: count it once
+    var += odometryVariance(config, totalTravel - ref.travel, totalSlipTravel - ref.slipTravel);
+    return Math.min(Math.sqrt(var), config.unknownStdDevMeters);
+  }
+
+  /** Approximate 1σ uncertainty of the current heading estimate, in radians. See above. */
+  public double getHeadingStdDevRad() {
+    if (status == Status.UNKNOWN || keyframes.isEmpty()) {
+      return config.unknownStdDevRad;
+    }
+    Keyframe ref = visionReference();
+    double var;
+    if (ref != null) {
+      var = sq(config.windowPriorStdDevRad);
+    } else {
+      ref = keyframes.get(0);
+      var = anchorVarRot;
+    }
+    if (latestGyroValid) {
+      var += sq(config.gyroDriftStdDevPerSqrtSec) * Math.max(0.0, latestTimestamp - ref.timestamp);
+    } else {
+      double turned =
+          Math.abs(latestOdometry.getRotation().minus(ref.odometry.getRotation()).getRadians());
+      var += sq(config.odometryRotStdDevBaseRad + config.odometryRotStdDevPerRad * turned);
+    }
+    return Math.min(Math.sqrt(var), config.unknownStdDevRad);
+  }
+
+  /**
+   * How far slip since the last tag sighting before {@code kf} may have thrown its pose off, 1σ.
+   */
+  private double slipStdDevSinceFix(Keyframe kf) {
+    Keyframe fix = null;
+    for (var other : keyframes) {
+      if (other.timestamp >= kf.timestamp) break;
+      if (!other.observations.isEmpty()) fix = other;
+    }
+    double slip = kf.slipTravel - (fix != null ? fix.slipTravel : keyframes.get(0).slipTravel);
+    return config.slipStdDevPerMeter * Math.max(0.0, slip);
+  }
+
+  /** The newest keyframe whose pose is constrained by accepted tag sightings, if localized. */
+  private Keyframe visionReference() {
+    if (status != Status.LOCALIZED) return null;
+    for (int i = keyframes.size() - 1; i >= 0; i--) {
+      if (!keyframes.get(i).observations.isEmpty()) return keyframes.get(i);
+    }
+    return null;
   }
 
   private static double rangeVariance(CameraModel cam, TagObservation obs) {

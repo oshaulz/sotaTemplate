@@ -38,9 +38,18 @@ import org.wpilib.util.Alert;
  * {@link first.robot.localization.Localization}'s job.
  */
 public class Drive implements Mechanism {
-  /** One high-rate odometry sample, handed to the SLAM. */
+  /**
+   * One high-rate odometry sample, handed to the SLAM.
+   *
+   * @param slipping The wheels were slipping or the robot was hit: this sample's wheel motion is
+   *     not to be trusted (see {@link TractionMonitor}).
+   */
   public record OdometrySample(
-      double timestamp, Pose2d odometryPose, double gyroYawRad, boolean gyroConnected) {}
+      double timestamp,
+      Pose2d odometryPose,
+      double gyroYawRad,
+      boolean gyroConnected,
+      boolean slipping) {}
 
   // TunerConstants doesn't include these constants, so they are declared locally
   /**
@@ -49,6 +58,8 @@ public class Drive implements Mechanism {
    * this comfortably for eight motors and a Pigeon.
    */
   public static final double ODOMETRY_FREQUENCY = 200.0;
+
+  private static final double LOOP_PERIOD = 0.02; // Secs
 
   public static final double DRIVE_BASE_RADIUS =
       Math.max(
@@ -83,6 +94,10 @@ public class Drive implements Mechanism {
   private final SwerveDriveOdometry odometry =
       new SwerveDriveOdometry(kinematics, Rotation2d.ZERO, lastModulePositions, Pose2d.ZERO);
   private final List<OdometrySample> odometrySamples = new ArrayList<>();
+  private final TractionMonitor traction = new TractionMonitor(kinematics);
+  private ChassisVelocities lastCommandedVelocity = new ChassisVelocities();
+  private TractionMonitor.Result tractionResult =
+      new TractionMonitor.Result(false, false, 0.0, 0.0, 0.0, 0.0);
 
   public Drive(
       GyroIO gyroIO,
@@ -118,12 +133,32 @@ public class Drive implements Mechanism {
 
     // Stop moving when disabled
     if (RobotState.isDisabled()) {
+      lastCommandedVelocity = new ChassisVelocities();
       for (var module : modules) {
         module.stop();
       }
       Logger.recordOutput("SwerveStates/Setpoints", new SwerveModuleVelocity[] {});
       Logger.recordOutput("SwerveStates/SetpointsOptimized", new SwerveModuleVelocity[] {});
     }
+
+    // Check the wheels against each other and the IMU before trusting them
+    tractionResult =
+        traction.update(
+            getModuleVelocities(),
+            gyroInputs.yawVelocityRadPerSec,
+            gyroInputs.accelerationXG,
+            gyroInputs.accelerationYG,
+            gyroInputs.connected,
+            LOOP_PERIOD);
+    Logger.recordOutput("Drive/Traction/Slipping", tractionResult.slipping());
+    Logger.recordOutput("Drive/Traction/Collision", tractionResult.collision());
+    Logger.recordOutput("Drive/Traction/ScrubMetersPerSec", tractionResult.scrubMetersPerSec());
+    Logger.recordOutput(
+        "Drive/Traction/YawRateErrorRadPerSec", tractionResult.yawRateErrorRadPerSec());
+    Logger.recordOutput(
+        "Drive/Traction/ImuVelocityErrorMetersPerSec",
+        tractionResult.imuVelocityErrorMetersPerSec());
+    Logger.recordOutput("Drive/Traction/AccelerationG", tractionResult.accelerationG());
 
     // Integrate raw odometry at the full sample rate
     odometrySamples.clear();
@@ -158,11 +193,31 @@ public class Drive implements Mechanism {
 
       Pose2d pose = odometry.update(new Rotation2d(rawGyroYaw), modulePositions);
       odometrySamples.add(
-          new OdometrySample(sampleTimestamps[i], pose, rawGyroYaw, gyroInputs.connected));
+          new OdometrySample(
+              sampleTimestamps[i],
+              pose,
+              rawGyroYaw,
+              gyroInputs.connected,
+              tractionResult.slipping()));
     }
 
     // Update gyro alert
     gyroDisconnectedAlert.set(!gyroInputs.connected && Constants.currentMode != Mode.SIM);
+  }
+
+  /** Whether the wheels are slipping (or the robot was just hit), so wheel odometry is suspect. */
+  public boolean isSlipping() {
+    return tractionResult.slipping();
+  }
+
+  /** This loop's traction verdict and the signals behind it. */
+  public TractionMonitor.Result getTraction() {
+    return tractionResult;
+  }
+
+  /** Whether the robot was just hit hard. */
+  public boolean hadCollision() {
+    return tractionResult.collision();
   }
 
   /** Odometry samples received this loop, oldest first. */
@@ -180,6 +235,8 @@ public class Drive implements Mechanism {
    * @param velocities Robot-relative velocities in meters/sec and radians/sec.
    */
   public void runVelocity(ChassisVelocities velocities) {
+    lastCommandedVelocity = new ChassisVelocities(velocities.vx, velocities.vy, velocities.omega);
+
     // Calculate module setpoints
     ChassisVelocities discrete = velocities.discretize(0.02);
     SwerveModuleVelocity[] setpoints = kinematics.toSwerveModuleVelocities(discrete);
@@ -250,6 +307,15 @@ public class Drive implements Mechanism {
       velocities[i] = modules[i].getVelocity();
     }
     return velocities;
+  }
+
+  /**
+   * Returns the robot-relative velocity most recently commanded with {@link #runVelocity}.
+   * Hand-offs between commands should continue from this, not from the measured velocity: when one
+   * command has just stopped the robot, the wheels may still be spinning down.
+   */
+  public ChassisVelocities getCommandedVelocity() {
+    return lastCommandedVelocity;
   }
 
   /** Returns the measured robot-relative chassis velocities. */

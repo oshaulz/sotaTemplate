@@ -8,8 +8,8 @@ import org.wpilib.opmode.Autonomous;
 import org.wpilib.opmode.OpMode;
 
 /**
- * Drive-to-point through waypoints, no path planner. Intermediate points are passed through at
- * speed; the last one stops.
+ * Drives through waypoints written in code. Intermediate points are passed through at speed; the
+ * last one stops. The builder turns them into one BLine path.
  */
 @Autonomous(name = "Waypoint Demo")
 public class WaypointAuto implements OpMode {
@@ -23,7 +23,7 @@ public class WaypointAuto implements OpMode {
   public void start() {
     Scheduler.getDefault()
         .schedule(
-            Auto.create("WaypointDemo", robot.drive, robot.localization)
+            Auto.create("WaypointDemo", robot.autoDrive, robot.localization)
                 .startAt(FieldPoses.START_CENTER)
                 .passThrough(FieldPoses.SCORE_LEFT)
                 .passThrough(FieldPoses.PICKUP_LEFT)

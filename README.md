@@ -8,7 +8,7 @@ A opinionated 2027 (Systemcore) FIRST Robotics Competition template
 It is based on the AdvantageKit [TalonFX swerve](https://docs.advantagekit.org/getting-started/template-projects/talonfx-swerve-template/) and [vision](https://docs.advantagekit.org/getting-started/template-projects/vision-template) templates. Two things replace their pose estimation and pathing:
 
 - **SLAM localization.** A sliding-window factor graph over gyro, 200 Hz wheel odometry and the raw corners of every AprilTag, solved on a second CPU core with [Sleipnir](https://github.com/SleipnirGroup/Sleipnir). Sleipnir ships inside WPILib 2027 as `org.wpilib.math.optimization`, so no extra dependency is needed. This replaces `SwerveDrivePoseEstimator`, MegaTag and PhotonVision's multi-tag estimator.
-- **Drive-to-point and smooth paths.** Autos use PID plus trapezoidal profiles to a pose, or spline paths followed by progress instead of time, so the robot can never fall behind its path. There is no PathPlanner.
+- **[BLine](https://docs.bline.run) for every automatic drive.** Autos and teleop auto-drive share one follower, one set of gains and one set of constraints. Paths are drawn in the [BLine editor](https://bline.run) or written in code, and followed by progress, not time, so the robot can never fall behind its path. There is no PathPlanner.
 
 **In our [benchmark](docs/benchmarks/RESULTS.md) the SLAM is about 1 cm RMS, where the usual PhotonVision + pose estimator pipeline is 11–17 cm** on the same simulated matches.
 
@@ -17,13 +17,16 @@ It also comes with batteries included, all working in simulation and on the robo
 - **A map that remembers.** The SLAM learns where every tag *really* is and saves the map to the robot's disk on every disable. If a tag gets knocked in quals 3, the robot already knows in quals 4, even after a reboot. A tag that is nudged mid-match is detected and re-learned within seconds. See [The map](#the-map-learned-tags-that-survive-reboots).
 - **Tag corners, not just centers.** Every tag contributes four corner reprojections through each camera's full 3D mount. That's far more accurate at range, measures each tag's yaw too, and only needs a cheap 2D pipeline. See [Vision](#vision).
 - **Detection QC.** Every detection from every backend passes the same checks before it reaches the SLAM: unknown or duplicate IDs, ambiguity, non-convex or tiny or wildly oblique corners, and ranges that disagree with the tag's apparent size. Every rejection is counted and logged.
-- **OpModes.** A `Driver` teleop; `Spline Two Piece`, `Two Piece`, `Waypoint Demo` and `Do Nothing` autos; and `Drive FF Characterization` and `Wheel Radius Characterization` utilities. They are discovered automatically and picked from the driver station. See [Commands v3 and OpModes](#commands-v3-and-opmodes).
+- **Slip and collision detection.** Every loop the wheels are checked against each other, the gyro and the accelerometer. While they slip (pinned, spun out, hit), the SLAM discounts their travel and leans on vision. Pinned for 1.5 s with the wheels spinning, the pose is back within 4 cm a second after release. See [Slip and collisions](#slip-and-collisions).
+- **Localization confidence.** A pose uncertainty (meters and degrees) and a 0–1 confidence are published every loop. Teleop auto-drive waits for confidence before it moves. See [Confidence](#confidence).
+- **Teleop auto-drive and acceleration limits.** Hold a button to drive to a pose, or through waypoints, with the auto follower and optional constraints. The joystick drive is acceleration-limited so the wheels keep their grip. See [Teleop](#teleop-auto-drive-and-acceleration-limits).
+- **OpModes.** A `Driver` teleop; `Path Two Piece`, `Two Piece`, `Waypoint Demo` and `Do Nothing` autos; and `Drive FF Characterization` and `Wheel Radius Characterization` utilities. They are discovered automatically and picked from the driver station. See [Commands v3 and OpModes](#commands-v3-and-opmodes).
 - **State machine.** A superstructure skeleton on the Commands v3 `StateMachine` (IDLE → INTAKING → HOLDING → SCORING), wired to the driver's bumper and trigger. Copy it for your mechanisms. See [State machines](#state-machines).
 - **A complete example mechanism.** An `Intake` on a TalonFX roller and a CANrange piece sensor, with full configs and current limits. In sim the same Talon code runs against CTRE's device simulation.
-- **Auto builder.** `Auto.create(...).startAt(A).followPath(path).then(intake::eject).driveTo(B)`, written once in blue coordinates and flipped for red automatically. See [Autos](#autos-auto-builder-paths-and-fieldposes).
+- **Auto builder.** `Auto.create(...).startAt(A).followPath("score-preload").then(intake::eject).driveTo(B)`, written once in blue coordinates and flipped for red automatically. See [Autos](#autos-auto-builder-paths-and-fieldposes).
 - **Named field poses.** `FieldPoses` holds start, pickup and scoring spots, logged as ghost robots in AdvantageScope.
 - **Vision backends.** Limelight (LimelightLib) and PhotonVision (photonlib), chosen per camera and mixable, plus a simulated camera. Both feed raw corners.
-- **Live tuning.** Drive, path, SLAM and intake gains can be edited from the dashboard, and replay stays exact. See [Live tuning](#live-tuning).
+- **Live tuning.** Auto-drive, teleop, traction, SLAM and intake parameters can be edited from the dashboard, and replay stays exact. See [Live tuning](#live-tuning).
 - **Drivable sim.** `./gradlew run -PsimGui` with a keyboard (WASD + QE) or any gamepad. Simulated sensors have realistic errors, so you can watch the SLAM correct them. See [Driving the simulator](#driving-the-simulator).
 - **Robot tests and benchmarks.** JUnit tests boot the real robot, select OpModes, press buttons, pin the robot mid-path and check where it drives. Further tests check SLAM accuracy, map persistence, every camera backend and QC. `./gradlew benchmark` compares the SLAM with PhotonVision. See [Tests](#tests).
 
@@ -38,6 +41,7 @@ The code is Java and uses **Commands v3** (coroutine commands and `Mechanism`s) 
 | Phoenix 6 | `26.70.0-alpha-2` |
 | LimelightLib | `2.0.0-beta9-alpha7` |
 | PhotonLib | `dev-v2027.0.0-alpha-2-90` (a PhotonVision dev build that targets `2027_alpha7`) |
+| BLine-Lib | `v2027.0.0-beta.3` (the 2027 beta, which targets `2027_alpha7`) |
 | Commands v3 | bundled with WPILib |
 | Java | 25 |
 | Systemcore image | alpha/beta 14+ |
@@ -70,7 +74,7 @@ Run `./gradlew run -PsimGui`. In VS Code, **WPILib: Simulate Robot Code** with *
 
 Any real USB or Bluetooth gamepad also works with no setup; the 2027 sim GUI uses SDL. Drag it onto slot 0 in the GUI.
 
-Watch it in AdvantageScope by connecting to `localhost`. Useful fields: `SimWorld/TruePose` (ground truth), `Localization/EstimatedPose`, `Localization/Keyframes`, `Localization/TagMap` against `Localization/TagLayout`, `Path/Trajectory`, and `FieldPoses/All`.
+Watch it in AdvantageScope by connecting to `localhost`. Useful fields: `SimWorld/TruePose` (ground truth), `Localization/EstimatedPose`, `Localization/Keyframes`, `Localization/TagMap` against `Localization/TagLayout`, `FollowPath/pathTranslations`, and `FieldPoses/All`.
 
 You need JDK 25, which the 2027 WPILib installer provides. If your `~/.gradle/gradle.properties` pins an older JDK with `org.gradle.java.home`, override it with `-Dorg.gradle.java.home=<jdk25>`.
 
@@ -79,15 +83,16 @@ You need JDK 25, which the 2027 WPILib installer provides. If your `~/.gradle/gr
 | Path | Contents |
 |---|---|
 | `first/robot/Robot.java` | `LoggedOpModeRobot`. Builds everything and runs the loop: sensors → localization → scheduler. Saves the tag map on disable. |
-| `first/robot/opmodes/` | `teleop/DriverTeleop`, `auto/{SplineAuto,TwoPieceAuto,WaypointAuto,DoNothingAuto}`, and the characterization OpModes in `utility/`. These are discovered automatically. |
+| `first/robot/opmodes/` | `teleop/DriverTeleop`, `auto/{PathFileAuto,TwoPieceAuto,WaypointAuto,DoNothingAuto}`, and the characterization OpModes in `utility/`. These are discovered automatically. |
 | `first/robot/FieldPoses.java` | Named field poses (starts, pickups, scoring) in blue coordinates, logged as alliance-flipped ghosts. |
-| `first/robot/autos/` | `Auto` (fluent builder over coroutines) and `Path` (spline paths with an independent heading profile). |
+| `first/robot/autos/` | `Auto` (fluent builder over coroutines). |
+| `src/main/deploy/autos/` | The BLine project: `config.json` (default constraints) and `paths/*.json`. Open it in the [BLine editor](https://bline.run). |
 | `first/robot/subsystems/intake/` | Example mechanism: `Intake`, `IntakeIO`, `IntakeIOTalonFX` (TalonFX + CANrange, full config) and `IntakeIOTalonFXSim` (the same Talon code on CTRE's simulator). |
 | `first/robot/superstructure/Superstructure.java` | Skeleton Commands v3 `StateMachine`: IDLE → INTAKING → HOLDING → SCORING. |
-| `first/robot/subsystems/drive/` | `Drive` (a v3 `Mechanism`, 200 Hz odometry), `Module`, and the IO layers `ModuleIO{TalonFX,Sim}` and `GyroIO{Pigeon2,Sim}`. |
+| `first/robot/subsystems/drive/` | `Drive` (a v3 `Mechanism`, 200 Hz odometry), `TractionMonitor` (slip and collision detection), `Module`, and the IO layers `ModuleIO{TalonFX,Sim}` and `GyroIO{Pigeon2,Sim}`. |
 | `first/robot/subsystems/vision/` | `Vision`, `TagQC`, `VisionIOLimelight`, `VisionIOPhotonVision`, `VisionIOSim`, and camera calibration and per-camera backend in `VisionConstants`. |
 | `first/robot/localization/` | `SlamEstimator` (the solver), `SlamConfig` (all tuning), `Localization` (the robot wrapper and logging), and `TagMapIO`/`TagMapIOFile` (map persistence). |
-| `first/robot/commands/DriveCommands.java` | Joystick drive, `driveToPose`, `followPath`, and feedforward and wheel-radius characterization. |
+| `first/robot/commands/` | `AutoDrive` (BLine: paths and drive-to-pose, for autos and teleop) and `DriveCommands` (acceleration-limited joystick drive, feedforward and wheel-radius characterization). |
 | `first/robot/util/` | `TunableNumber` (replay-safe live tuning), `AllianceFlip`, `CameraUndistort`, `PhoenixUtil`. |
 | `first/robot/sim/SimWorld.java` | Ground truth for simulation, with deliberately imperfect sensors. |
 | `first/robot/generated/TunerConstants.java` | Phoenix Tuner X output. Replace it with your robot's. |
@@ -99,7 +104,7 @@ Every keyframe (one per camera frame, plus odometry-only ones every 0.5 m, 25° 
 | Factor | Residual | Why |
 |---|---|---|
 | Gyro | `θₖ − (gyroₖ + offset)` | The gyro owns heading. The solver finds the offset, so it never needs zeroing. |
-| Odometry | wheel translation between consecutive keyframes, in the earlier keyframe's frame, times `scale` | This is independent of the heading offset. `scale` calibrates tread wear online. |
+| Odometry | wheel translation between consecutive keyframes, in the earlier keyframe's frame, times `scale` | This is independent of the heading offset. `scale` calibrates tread wear online. Travel while slipping is discounted and much less certain. See [Slip and collisions](#slip-and-collisions). |
 | Tag corners | each of the tag's four corners, placed in 3D from the tag pose, carried through the robot pose and the camera's full 3D mount, versus where the camera saw it | The default. About 1 px of noise per corner. It pins position, heading and the tag's own yaw. |
 | Tag center | bearing and range to the tag | Fallback when a camera reports no corners. |
 | Window prior | the oldest keyframe's pose | Summarizes everything that slid out of the window. |
@@ -143,6 +148,26 @@ Everything is in `SlamConfig` and is also live-tunable under `/Tuning/Slam`. Sta
 ### Before the robot is localized
 
 Heading is assumed to be "facing away from your own driver station" (offset 0 on blue, π on red) until a tag is seen. After that the solver corrects it. Autos call `resetPose` only when vision hasn't localized the robot yet. The B button resets heading manually; you shouldn't need it once tags are visible.
+
+### Slip and collisions
+
+`TractionMonitor` checks the wheels every loop. Any one of three checks flags slip:
+
+- **Scrub:** the four modules disagree with each other. A rigid chassis can only move one way, so the residual after the best fit is a wheel sliding sideways or spinning.
+- **Yaw rate:** the wheels say the robot is turning at a different rate than the gyro.
+- **Accelerometer:** the wheels' velocity disagrees with the IMU's. The IMU velocity follows the wheels while they agree on acceleration, and is left alone while they don't. An IMU only feels changes, so this catches being hit or released with the wheels spinning. Vision handles the steady state.
+
+A collision is a horizontal acceleration spike above `Traction/CollisionThresholdG`. It is logged on its own and not counted as slip: the spike when a pinned robot is released is the wheels gripping again.
+
+Each odometry sample carries the slip flag to the SLAM. It puts a keyframe where slip starts and stops, believes only `slipOdometryTrust` (25%) of the travel in between, with a σ of `slipStdDevPerMeter` (1 m per meter), and widens the outlier gate by the same amount, so the sightings that will fix the pose aren't rejected. On a synthetic 3 s pin this cuts the worst error from 29 cm to 11 cm. Watch `Drive/Traction/*`; `Drive.isSlipping()` and `Drive.hadCollision()` are there for your own code.
+
+### Confidence
+
+`Localization` publishes how much to trust the pose, under `Localization/Confidence/*`:
+
+- `PositionStdDevMeters` and `HeadingStdDevDeg`: approximate 1σ. Every keyframe in the window that saw tags is pinned down by as much as those sightings can, and those fixes are fused. Odometry noise since the newest of them (slip included) is added once. This is not the solver's posterior, but it tracks it: about 1 cm while watching tags, about 17 cm after 4 m blind, and meters while slipping.
+- `Value`: the probability that the pose is within `ConfidencePositionToleranceMeters` (5 cm) and `ConfidenceHeadingToleranceDeg` (3°) of the truth.
+- `Confident`: `Value` is at least `ConfidentThreshold` (0.9). Use `localization.isConfident()` to gate anything that needs an accurate pose, such as aligning or auto-scoring. Teleop auto-drive already does.
 
 ## The map: learned tags that survive reboots
 
@@ -189,55 +214,58 @@ Without corners (no calibration, or Send Corners off), a camera falls back to ta
 
 The SLAM adds its own QC on top: the outlier gate (`Localization/QC/GateRejections`), per-tag residual and map disagreement (`Localization/QC/TagResidualSigma`, `.../TagMapDisagreementSigma`), released tags and moved-tag events.
 
-## Drive to point
+## Driving itself: BLine and `AutoDrive`
 
-`DriveCommands.driveToPose(drive, localization, target, constraints, endVelocity)` drives straight at a field pose:
-
-- A trapezoidal profile runs on the remaining distance along the line to the target, with P feedback on top.
-- Heading has its own profile.
-- With `endVelocity > 0` the robot arrives at that speed and the command ends at the tolerance radius. Chain several of these for fast waypoint paths. `WaypointAuto` is the example.
-
-## Paths
-
-`Path` builds smooth, time-optimal spline paths with WPILib's trajectory generator (velocity and acceleration limits along the whole curve). Heading is profiled independently, as a swerve allows:
+Every automatic drive goes through `AutoDrive`, built on [BLine](https://docs.bline.run): one follower, one set of PID gains (`AutoDrive/*Kp`) and one set of default constraints, for autos and teleop alike. BLine follows polylines by progress, not time. It projects the robot onto the path, so a robot that is bumped or pinned carries on from where it actually is instead of cutting corners to catch up with a setpoint.
 
 ```java
-Path.from(FieldPoses.SCORE_CENTER)
-    .through(new Translation2d(4.5, 5.6))   // bend the path here, heading free
-    .through(FieldPoses.SCORE_LEFT)         // pass here, facing this way
-    .to(FieldPoses.PICKUP_LEFT)             // end pose
-    .withMaxVelocity(3.0)
-    .withEndVelocity(1.0);                  // optional: keep moving into the next path
+autoDrive.follow("score-preload");                          // drawn in the BLine editor
+autoDrive.follow(new Path(new Path.Waypoint(FieldPoses.SCORE_LEFT)));  // or written in code
+autoDrive.driveTo(FieldPoses.SCORE_CENTER);                 // drive to a pose and stop
+autoDrive.driveTo(FieldPoses.SCORE_CENTER,
+    new Path.PathConstraints().setMaxVelocityMetersPerSec(2.0));       // with constraints
+autoDrive.driveThrough(List.of(a, b, c), constraints);      // flow through a and b, stop at c
+autoDrive.driveToFieldPose(() -> target, constraints);      // a pose already in field coordinates
 ```
 
-`Path.fromCurrentPose()` starts wherever the robot is, for on-the-fly paths in teleop (hold the left bumper in `DriverTeleop`).
+- Poses and paths are in blue coordinates and flipped for red when the command starts. `AllianceFlip` points BLine at the same field size, so autos, teleop targets and `FieldPoses` always agree.
+- Constraints are BLine's `Path.PathConstraints`: velocity, acceleration, angular limits (also over a range of a path's elements) and end tolerances. Anything you leave unset uses the `AutoDrive/*` defaults.
+- Path files live in `src/main/deploy/autos/paths/`, with defaults in `autos/config.json`. Open the folder in the [BLine editor](https://bline.run) to draw them. Event triggers in a path run actions registered with `FollowPath.registerEventTrigger(key, …)`. `Path Two Piece` starts the intake this way.
+- In autos a path gives up after `AutoDrive/StallTimeoutSecs` without the pose moving, so a pinned robot doesn't hang the routine. Teleop commands never time out: the driver lets go.
+- BLine commands speed = `TranslationKp` × distance left, then limits acceleration. **Keep `TranslationKp` × max velocity ≤ max acceleration.** Otherwise, near the end, P asks to slow down faster than the limiter allows and the robot overshoots. The defaults are 2.0 × 3.5 m/s ≤ 8 m/s².
+- BLine's telemetry is logged through AdvantageKit under `FollowPath/*`, so it is in replay too.
 
-**It follows by progress, not by time, so it can't fall behind.** Time-indexed followers (PathPlanner's included) chase a setpoint that keeps moving; a robot that gets bumped or pinned ends up far behind it and cuts corners to catch up. `DriveCommands.followPath` instead projects the robot onto the path each loop, searching only forward, and uses that point as the reference:
-- the feedforward is the planned velocity just ahead of that point, rate-limited from the robot's actual speed;
-- feedback only pulls the robot sideways back onto the line;
-- when the robot is released after being held, it re-accelerates along the planned profile from where it actually is;
-- it ends when the robot reaches the end, or after `Path/StallTimeoutSecs` without progress so a pinned robot doesn't hang an auto.
+## Teleop: auto-drive and acceleration limits
 
-`OpModeTest` pins the robot for 1.5 s in the middle of the `Spline Two Piece` auto's curve. It stays within 10 cm of the path throughout and still scores both pieces.
+In `DriverTeleop`, hold **Y** to drive to `SCORE_CENTER`, or the **left bumper** to drive to `PICKUP_LEFT` through a waypoint, capped at 2 m/s. Both are wrapped in `autoDrive.onceConfident(...)`: the robot holds still until `localization.isConfident()`, because driving itself somewhere on a pose it doesn't trust is how a robot ends up in a wall. Let go to take control back.
+
+Bind your own the same way:
+
+```java
+driver.rightStick().whileTrue(autoDrive.onceConfident(autoDrive.driveTo(() -> nearestScoringSpot(), constraints)));
+```
+
+Joystick drive is acceleration-limited (`Teleop/MaxAccelerationMetersPerSec2`, `Teleop/MaxAngularAccelerationRadPerSec2`) in the field frame, so spinning while driving doesn't count as acceleration. Slamming the stick no longer breaks traction, which also keeps the odometry honest for the SLAM. It continues from whatever the previous command was asking for, so taking over from an auto-drive doesn't jerk the robot.
 
 ## Autos: `Auto` builder, paths and `FieldPoses`
 
 Write poses once, in blue coordinates, in `FieldPoses`. Chain them with the builder; flipping for red happens when the auto runs.
 
 ```java
-Auto.create("SplineTwoPiece", robot.drive, robot.localization)
+Auto.create("TwoPiece", robot.autoDrive, robot.localization)
     .startAt(FieldPoses.START_CENTER)          // only resets pose if vision hasn't localized yet
-    .followPath(Path.from(FieldPoses.START_CENTER).to(FieldPoses.SCORE_CENTER))
+    .followPath("score-preload")                // a path from the BLine editor
     .then(intake::eject)                        // run a command to completion
     .alongWith(intake::intakeUntilHeld)         // start in the background, keep going
-    .followPath(Path.from(FieldPoses.SCORE_CENTER).through(new Translation2d(4.5, 5.6)).to(FieldPoses.PICKUP_LEFT))
+    .passThrough(FieldPoses.SCORE_LEFT)         // flow through without stopping...
+    .driveTo(FieldPoses.PICKUP_LEFT)            // ...and stop here: one BLine path
     .waitUntil(intake::hasPiece)
-    .driveTo(FieldPoses.SCORE_CENTER)           // or point-to-point
+    .driveTo(FieldPoses.SCORE_CENTER, new Path.PathConstraints().setMaxVelocityMetersPerSec(2.0))
     .then(intake::eject)
     .build();
 ```
 
-Other steps are `passThrough`, `waitSeconds`, `thenRun`, and `driveTo(pose, constraints)`. Progress is logged to `Auto/Step`, the route to `Auto/PlannedPath`, and each path to `Path/Trajectory`. Every `FieldPoses` constant is logged each loop as `FieldPoses/<NAME>` and `FieldPoses/All`, already flipped for the current alliance.
+Other steps are `followPath(Path)`, `waitSeconds` and `thenRun`. Consecutive `passThrough` and `driveTo` steps become one path. A `passThrough` followed by any other step stops at its pose. Progress is logged to `Auto/Step`, the route to `Auto/PlannedPath`, and the active path to `FollowPath/*`. Every `FieldPoses` constant is logged each loop as `FieldPoses/<NAME>` and `FieldPoses/All`, already flipped for the current alliance.
 
 ## State machines
 
@@ -256,8 +284,10 @@ With `Constants.tuningMode = true`, every `TunableNumber` is editable from any N
 
 | Group | Parameters |
 |---|---|
-| `DriveToPose/*` | speeds, accelerations, gains, tolerances; read when each command starts |
-| `Path/*` | default speed and acceleration, gains, lookahead, end tolerance, stall timeout |
+| `AutoDrive/*` | follower gains, default speed, acceleration and tolerances, handoff radius, stall timeout; read when each command starts |
+| `Teleop/*` | joystick acceleration limits |
+| `Traction/*` | slip and collision thresholds |
+| `Localization/*` | what counts as confident |
 | `Slam/*` | window size, iterations, odometry/gyro noise, robust kernel, outlier gate; read every solve |
 | `Intake/*` | roller voltages |
 
@@ -269,9 +299,9 @@ Values go through AdvantageKit's `LoggedNetworkNumber`, so they are logged as in
 
 | Test | What it covers |
 |---|---|
-| `SlamEstimatorTest` | SLAM accuracy, corners against centers, unknown start, learning a misplaced tag, the map surviving a reboot through the real file IO, re-learning a tag nudged mid-match |
+| `SlamEstimatorTest` | SLAM accuracy, corners against centers, unknown start, learning a misplaced tag, the map surviving a reboot through the real file IO, re-learning a tag nudged mid-match, a 3 s pin with and without the slip reported, and the confidence estimate while seeing tags, driving blind and slipping |
 | `SimPipelineTest` | The full sim sensor stack into `Localization` |
-| `OpModeTest` | Boots the real `Robot`, selects OpModes and presses buttons through `DriverStationSim`. Covers field-relative teleop, no duplicate bindings across disable and enable, the superstructure state machine on the Talon-sim intake, all autos finishing on target, and a spline auto recovering from being pinned mid-path. |
+| `OpModeTest` | Boots the real `Robot`, selects OpModes and presses buttons through `DriverStationSim`. Covers field-relative teleop, no duplicate bindings across disable and enable, the superstructure state machine on the Talon-sim intake, all autos finishing on target, the `Path Two Piece` auto pinned mid-path with its wheels spinning (slip detected, cleared on release, pose recovered, both pieces scored), teleop auto-drive on the Y button, and the teleop acceleration limit. |
 | `CameraBackendTest` | Limelight (with real lens distortion and corners in a scrambled order), PhotonVision (its own `VisionSystemSim`, including a tag 35° off-axis) and the template's sim camera, all checked against known geometry: corner order and position, bearing sign, range, and timestamp timebase. A field-wide sweep also checks that the sim camera never reports a tag seen from behind. |
 | `TagQCTest` | Each QC rule, and canonical corner ordering, including tags seen nearly edge-on |
 | `LocalizationBenchmark` | Not part of `build`; run with `./gradlew benchmark` |
@@ -292,6 +322,8 @@ Values go through AdvantageKit's `LoggedNetworkNumber`, so they are logged as in
 1. Generate `TunerConstants` with Tuner X. Keep the `kCANBus` line: `new CANBus(CANPort.CAN_S0)` for a Systemcore bus, or `new CANBus("name")` for a CANivore. Drive odometry is sampled at 200 Hz (`Drive.ODOMETRY_FREQUENCY`).
 2. In `VisionConstants`, set each camera's name, backend (`LIMELIGHT` or `PHOTONVISION`), `robotToCamera` transform and noise, then set the cameras up as in [What to run on the camera](#what-to-run-on-the-camera). Limelights plugged into Systemcore over USB are named `limelightsc0..2`.
 3. Set the intake's CAN IDs, bus, gear ratio, invert and CANrange threshold in `IntakeConstants`.
-4. Set `VisionConstants.FIELD` to the 2027 field once it's published, update `FieldPoses`, and check whether `AllianceFlip` should rotate or mirror.
+4. Set `VisionConstants.FIELD` to the 2027 field once it's published, update `FieldPoses` and the paths in `src/main/deploy/autos/paths` (in the [BLine editor](https://bline.run)), and check whether `AllianceFlip` should rotate or mirror.
 5. Set your team number in `.wpilib/wpilib_preferences.json`.
 6. Run the `Wheel Radius Characterization` and `Drive FF Characterization` utility OpModes.
+7. Set `AutoDrive/MaxAccelerationMetersPerSec2` and `Teleop/MaxAccelerationMetersPerSec2` to what your wheels can actually grip, then tune the `AutoDrive/*Kp` gains, keeping `TranslationKp` × max velocity ≤ max acceleration.
+8. Drive into a wall and watch `Drive/Traction/*`: `Slipping` should go true while the wheels spin and false soon after. Nudge the `Traction/*` thresholds if normal driving flags it.

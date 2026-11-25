@@ -21,12 +21,12 @@ public class TwoPieceAuto implements OpMode {
     var intake = robot.intake;
     Scheduler.getDefault()
         .schedule(
-            Auto.create("TwoPiece", robot.drive, robot.localization)
+            Auto.create("TwoPiece", robot.autoDrive, robot.localization)
                 .startAt(FieldPoses.START_CENTER)
                 .driveTo(FieldPoses.SCORE_CENTER)
                 .then(intake::eject)
-                .passThrough(FieldPoses.SCORE_LEFT)
                 .alongWith(intake::intakeUntilHeld) // Intake on the way, don't wait for it
+                .passThrough(FieldPoses.SCORE_LEFT)
                 .driveTo(FieldPoses.PICKUP_LEFT)
                 .waitUntil(intake::hasPiece)
                 .passThrough(FieldPoses.SCORE_LEFT)

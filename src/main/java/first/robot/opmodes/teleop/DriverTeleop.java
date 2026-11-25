@@ -1,15 +1,16 @@
 package first.robot.opmodes.teleop;
 
+import bline.path.Path;
 import first.robot.FieldPoses;
 import first.robot.Robot;
-import first.robot.autos.Path;
 import first.robot.commands.DriveCommands;
 import first.robot.superstructure.Superstructure;
 import first.robot.util.AllianceFlip;
+import java.util.List;
 import org.wpilib.command3.Command;
 import org.wpilib.command3.Scheduler;
+import org.wpilib.math.geometry.Pose2d;
 import org.wpilib.math.geometry.Rotation2d;
-import org.wpilib.math.geometry.Translation2d;
 import org.wpilib.opmode.OpMode;
 import org.wpilib.opmode.Teleop;
 
@@ -66,23 +67,21 @@ public class DriverTeleop implements OpMode {
     // Hold A to lock the wheels
     driver.faceDown().whileTrue(drive.xLock());
 
-    // Hold Y to drive to a field point
-    driver
-        .faceUp()
-        .whileTrue(
-            DriveCommands.driveToPose(
-                drive, localization, () -> AllianceFlip.apply(FieldPoses.SCORE_CENTER)));
+    // Hold Y to drive to the scoring spot. Same follower, gains and default constraints as autos.
+    // It starts once the robot trusts its pose; let go to take back control.
+    var autoDrive = robot.autoDrive;
+    driver.faceUp().whileTrue(autoDrive.onceConfident(autoDrive.driveTo(FieldPoses.SCORE_CENTER)));
 
-    // Hold left bumper for a smooth on-the-fly path to the pickup, from wherever the robot is
+    // Hold left bumper to drive to the pickup through a waypoint, capped at 2 m/s
     driver
         .leftBumper()
         .whileTrue(
-            DriveCommands.followPath(
-                drive,
-                localization,
-                Path.fromCurrentPose()
-                    .through(new Translation2d(5.0, 5.5))
-                    .to(FieldPoses.PICKUP_LEFT)));
+            autoDrive.onceConfident(
+                autoDrive.driveThrough(
+                    List.of(
+                        new Pose2d(5.0, 5.5, FieldPoses.PICKUP_LEFT.getRotation()),
+                        FieldPoses.PICKUP_LEFT),
+                    new Path.PathConstraints().setMaxVelocityMetersPerSec(2.0))));
 
     // Press B to declare "the robot is facing away from me". Only needed if no tags are visible;
     // the SLAM solves heading on its own once it sees one.

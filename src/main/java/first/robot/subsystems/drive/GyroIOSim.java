@@ -20,6 +20,9 @@ public class GyroIOSim implements GyroIO {
     inputs.connected = true;
     inputs.yawPositionRad = yaw;
     inputs.yawVelocityRadPerSec = world.getTrueYawRateRadPerSec();
+    var accel = world.getTrueAccelerationMetersPerSec2();
+    inputs.accelerationXG = accel.getX() / 9.80665;
+    inputs.accelerationYG = accel.getY() / 9.80665;
     inputs.odometryYawTimestamps = new double[] {Timer.getMonotonicTimestamp()};
     inputs.odometryYawPositionsRad = new double[] {yaw};
   }

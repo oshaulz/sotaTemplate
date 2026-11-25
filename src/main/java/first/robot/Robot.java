@@ -7,6 +7,7 @@
 
 package first.robot;
 
+import first.robot.commands.AutoDrive;
 import first.robot.generated.TunerConstants;
 import first.robot.localization.Localization;
 import first.robot.localization.SlamConfig;
@@ -54,6 +55,7 @@ public class Robot extends LoggedOpModeRobot {
   public final Vision vision;
   public final Intake intake;
   public final Localization localization;
+  public final AutoDrive autoDrive;
   public final CommandGamepad driver = new CommandGamepad(0);
 
   private final Scheduler scheduler = Scheduler.getDefault();
@@ -156,6 +158,7 @@ public class Robot extends LoggedOpModeRobot {
 
     localization =
         new Localization(new SlamConfig(), cameras, VisionConstants.TAG_POSES, tagMapIO());
+    autoDrive = new AutoDrive(drive, localization);
 
     // Robot-wide defaults (OpModes may override these while they are selected)
     drive.setDefaultCommand(drive.idle());

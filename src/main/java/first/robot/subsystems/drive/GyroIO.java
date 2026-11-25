@@ -18,6 +18,13 @@ public interface GyroIO {
     public double yawPositionRad = 0.0;
 
     public double yawVelocityRadPerSec = 0.0;
+
+    /** Robot-frame forward acceleration with gravity removed, in g. */
+    public double accelerationXG = 0.0;
+
+    /** Robot-frame leftward acceleration with gravity removed, in g. */
+    public double accelerationYG = 0.0;
+
     public double[] odometryYawTimestamps = new double[] {};
 
     /** Continuous (unwrapped) yaw samples, CCW positive. */

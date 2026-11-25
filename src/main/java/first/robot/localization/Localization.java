@@ -36,6 +36,14 @@ public class Localization {
   private final TunableNumber robustKernelSigma;
   private final TunableNumber outlierGateSigma;
   private final Map<Integer, Pose3d> layout;
+
+  // What "confident" means: the chance the pose is within these tolerances of the truth
+  private final TunableNumber confidencePositionTolerance =
+      new TunableNumber("Localization/ConfidencePositionToleranceMeters", 0.05);
+  private final TunableNumber confidenceHeadingTolerance =
+      new TunableNumber("Localization/ConfidenceHeadingToleranceDeg", 3.0);
+  private final TunableNumber confidentThreshold =
+      new TunableNumber("Localization/ConfidentThreshold", 0.9);
   private Pose2d pose = Pose2d.ZERO;
 
   /**
@@ -88,7 +96,11 @@ public class Localization {
 
     for (var sample : odometry) {
       slam.addOdometry(
-          sample.timestamp(), sample.odometryPose(), sample.gyroYawRad(), sample.gyroConnected());
+          sample.timestamp(),
+          sample.odometryPose(),
+          sample.gyroYawRad(),
+          sample.gyroConnected(),
+          sample.slipping());
     }
     slam.addObservations(observations);
 
@@ -107,6 +119,11 @@ public class Localization {
     pose = slam.getEstimatedPose();
 
     Logger.recordOutput("Localization/Status", slam.getStatus());
+    Logger.recordOutput("Localization/Confidence/PositionStdDevMeters", getPositionStdDevMeters());
+    Logger.recordOutput(
+        "Localization/Confidence/HeadingStdDevDeg", Math.toDegrees(getHeadingStdDevRad()));
+    Logger.recordOutput("Localization/Confidence/Value", getConfidence());
+    Logger.recordOutput("Localization/Confidence/Confident", isConfident());
     Logger.recordOutput("Localization/GyroOffsetRad", slam.getGyroOffset());
     Logger.recordOutput("Localization/OdometryScale", slam.getOdometryScale());
     Logger.recordOutput("Localization/Keyframes", slam.getKeyframePoses());
@@ -163,6 +180,53 @@ public class Localization {
   /** Returns whether a tag has constrained the pose (as opposed to dead reckoning). */
   public boolean isLocalized() {
     return slam.getStatus() == SlamEstimator.Status.LOCALIZED;
+  }
+
+  /**
+   * Approximate 1σ uncertainty of {@link #getPose()}'s position, meters. Small right after the
+   * cameras see tags; grows with distance driven since, and quickly while the wheels slip.
+   */
+  public double getPositionStdDevMeters() {
+    return slam.getPositionStdDevMeters();
+  }
+
+  /** Approximate 1σ uncertainty of {@link #getPose()}'s heading, radians. */
+  public double getHeadingStdDevRad() {
+    return slam.getHeadingStdDevRad();
+  }
+
+  /**
+   * How much to trust the pose, from 0 to 1: the probability that it is within {@code
+   * /Tuning/Localization/ConfidencePositionToleranceMeters} and {@code
+   * ConfidenceHeadingToleranceDeg} of the truth, under the uncertainty estimates above. Use it to
+   * gate anything that needs an accurate pose (auto-aligning, auto-scoring) or show it to the
+   * driver.
+   */
+  public double getConfidence() {
+    double r = confidencePositionTolerance.get();
+    double sigma = getPositionStdDevMeters();
+    // 2D isotropic Gaussian: P(|error| < r) = 1 - exp(-r² / 2σ²)
+    double position = 1.0 - Math.exp(-(r * r) / (2.0 * sigma * sigma));
+    double a = Math.toRadians(confidenceHeadingTolerance.get());
+    double heading = erf(a / (getHeadingStdDevRad() * Math.sqrt(2.0)));
+    return position * heading;
+  }
+
+  /** Whether {@link #getConfidence()} is above {@code /Tuning/Localization/ConfidentThreshold}. */
+  public boolean isConfident() {
+    return getConfidence() >= confidentThreshold.get();
+  }
+
+  /** Error function, Abramowitz and Stegun 7.1.26 (error below 1.5e-7). */
+  private static double erf(double x) {
+    double t = 1.0 / (1.0 + 0.3275911 * Math.abs(x));
+    double y =
+        1.0
+            - t
+                * (0.254829592
+                    + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))))
+                * Math.exp(-x * x);
+    return Math.copySign(y, x);
   }
 
   /** Resets the pose, e.g. to an auto's start pose. The learned tag map is kept. */

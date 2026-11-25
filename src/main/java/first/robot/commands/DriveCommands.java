@@ -7,7 +7,7 @@
 
 package first.robot.commands;
 
-import first.robot.autos.Path;
+import bline.following.HolonomicRateLimiter;
 import first.robot.localization.Localization;
 import first.robot.subsystems.drive.Drive;
 import first.robot.util.TunableNumber;
@@ -16,18 +16,13 @@ import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleSupplier;
-import java.util.function.Supplier;
-import org.littletonrobotics.junction.Logger;
 import org.wpilib.command3.Command;
 import org.wpilib.driverstation.Alliance;
 import org.wpilib.driverstation.MatchState;
-import org.wpilib.math.controller.ProfiledPIDController;
 import org.wpilib.math.filter.SlewRateLimiter;
-import org.wpilib.math.geometry.Pose2d;
 import org.wpilib.math.geometry.Rotation2d;
 import org.wpilib.math.geometry.Translation2d;
 import org.wpilib.math.kinematics.ChassisVelocities;
-import org.wpilib.math.trajectory.TrapezoidProfile;
 import org.wpilib.math.util.MathUtil;
 import org.wpilib.math.util.Units;
 import org.wpilib.system.Timer;
@@ -35,6 +30,7 @@ import org.wpilib.system.Timer;
 /** Command factories for the drive. Every command requires {@link Drive}. */
 public final class DriveCommands {
   private static final double DEADBAND = 0.1;
+  private static final double LOOP_PERIOD = 0.02; // Secs
   private static final double FF_START_DELAY = 2.0; // Secs
   private static final double FF_RAMP_RATE = 0.1; // Volts/Sec
   private static final double WHEEL_RADIUS_MAX_VELOCITY = 0.25; // Rad/Sec
@@ -47,8 +43,23 @@ public final class DriveCommands {
   // ---------------------------------------------------------------------------------------------
 
   /**
+   * Teleop acceleration limits. They stop the wheels from breaking traction when the driver slams
+   * the stick (which also keeps wheel odometry honest for the SLAM) and keep a tall robot from
+   * tipping. Deceleration is limited the same way.
+   */
+  private static final TunableNumber MAX_ACCELERATION =
+      new TunableNumber("Teleop/MaxAccelerationMetersPerSec2", 8.0);
+
+  private static final TunableNumber MAX_ANGULAR_ACCELERATION =
+      new TunableNumber("Teleop/MaxAngularAccelerationRadPerSec2", 6.0 * Math.PI);
+
+  /**
    * Field-relative drive from joystick axes. Forward on the stick is always away from the driver,
    * on either alliance.
+   *
+   * <p>The commanded velocity is rate-limited in the field frame (so spinning while driving doesn't
+   * count as acceleration), starting from whatever the previous command was asking for, so taking
+   * back control from an auto-drive doesn't jerk the robot.
    */
   public static Command joystickDrive(
       Drive drive,
@@ -57,17 +68,29 @@ public final class DriveCommands {
       DoubleSupplier ySupplier,
       DoubleSupplier omegaSupplier) {
     return drive
-        .runRepeatedly(
-            () -> {
-              Translation2d linear =
-                  linearVelocityFromJoysticks(xSupplier.getAsDouble(), ySupplier.getAsDouble())
-                      .times(drive.getMaxLinearSpeedMetersPerSec());
-              double omega = MathUtil.applyDeadband(omegaSupplier.getAsDouble(), DEADBAND);
-              omega = Math.copySign(omega * omega, omega) * drive.getMaxAngularSpeedRadPerSec();
+        .run(
+            coroutine -> {
+              ChassisVelocities last =
+                  drive.getCommandedVelocity().toFieldRelative(driverRelativeHeading(localization));
+              while (true) {
+                Translation2d linear =
+                    linearVelocityFromJoysticks(xSupplier.getAsDouble(), ySupplier.getAsDouble())
+                        .times(drive.getMaxLinearSpeedMetersPerSec());
+                double omega = MathUtil.applyDeadband(omegaSupplier.getAsDouble(), DEADBAND);
+                omega = Math.copySign(omega * omega, omega) * drive.getMaxAngularSpeedRadPerSec();
 
-              drive.runVelocity(
-                  new ChassisVelocities(linear.getX(), linear.getY(), omega)
-                      .toRobotRelative(driverRelativeHeading(localization)));
+                last =
+                    HolonomicRateLimiter.limit(
+                        new ChassisVelocities(linear.getX(), linear.getY(), omega),
+                        last,
+                        LOOP_PERIOD,
+                        MAX_ACCELERATION.get(),
+                        MAX_ANGULAR_ACCELERATION.get(),
+                        drive.getMaxLinearSpeedMetersPerSec(),
+                        drive.getMaxAngularSpeedRadPerSec());
+                drive.runVelocity(last.toRobotRelative(driverRelativeHeading(localization)));
+                coroutine.yield();
+              }
             })
         .named("Drive.JoystickDrive");
   }
@@ -84,310 +107,6 @@ public final class DriveCommands {
   private static Rotation2d driverRelativeHeading(Localization localization) {
     boolean red = MatchState.getAlliance().orElse(Alliance.BLUE) == Alliance.RED;
     return red ? localization.getRotation().plus(Rotation2d.PI) : localization.getRotation();
-  }
-
-  // ---------------------------------------------------------------------------------------------
-  // Drive to point
-  // ---------------------------------------------------------------------------------------------
-
-  /**
-   * Limits and gains for {@link #driveToPose}.
-   *
-   * @param maxVelocity Cruise speed, m/s.
-   * @param maxAcceleration Trapezoid acceleration, m/s².
-   * @param maxAngularVelocity Turn rate, rad/s.
-   * @param maxAngularAcceleration Turn acceleration, rad/s².
-   * @param translationKp Feedback on remaining distance, (m/s)/m.
-   * @param rotationKp Feedback on remaining heading, (rad/s)/rad.
-   * @param positionTolerance Finish when closer than this, m.
-   * @param angleTolerance Finish when within this heading, rad.
-   */
-  public record DriveToPoseConstraints(
-      double maxVelocity,
-      double maxAcceleration,
-      double maxAngularVelocity,
-      double maxAngularAcceleration,
-      double translationKp,
-      double rotationKp,
-      double positionTolerance,
-      double angleTolerance) {
-    // Conservative defaults for a ~4.5 m/s swerve, live-tunable under /Tuning/DriveToPose
-    private static final TunableNumber MAX_VELOCITY =
-        new TunableNumber("DriveToPose/MaxVelocity", 3.5);
-    private static final TunableNumber MAX_ACCELERATION =
-        new TunableNumber("DriveToPose/MaxAcceleration", 3.0);
-    private static final TunableNumber MAX_ANGULAR_VELOCITY =
-        new TunableNumber("DriveToPose/MaxAngularVelocity", 2.0 * Math.PI);
-    private static final TunableNumber MAX_ANGULAR_ACCELERATION =
-        new TunableNumber("DriveToPose/MaxAngularAcceleration", 6.0 * Math.PI);
-    private static final TunableNumber TRANSLATION_KP =
-        new TunableNumber("DriveToPose/TranslationKp", 3.0);
-    private static final TunableNumber ROTATION_KP =
-        new TunableNumber("DriveToPose/RotationKp", 4.0);
-    private static final TunableNumber POSITION_TOLERANCE =
-        new TunableNumber("DriveToPose/PositionToleranceMeters", 0.03);
-    private static final TunableNumber ANGLE_TOLERANCE =
-        new TunableNumber("DriveToPose/AngleToleranceDeg", 2.0);
-
-    /**
-     * The current tuned constraints. Read when a command starts, so edits apply on the next run.
-     */
-    public static DriveToPoseConstraints tuned() {
-      return new DriveToPoseConstraints(
-          MAX_VELOCITY.get(),
-          MAX_ACCELERATION.get(),
-          MAX_ANGULAR_VELOCITY.get(),
-          MAX_ANGULAR_ACCELERATION.get(),
-          TRANSLATION_KP.get(),
-          ROTATION_KP.get(),
-          POSITION_TOLERANCE.get(),
-          Units.degreesToRadians(ANGLE_TOLERANCE.get()));
-    }
-
-    public DriveToPoseConstraints withMaxVelocity(double velocity) {
-      return new DriveToPoseConstraints(
-          velocity,
-          maxAcceleration,
-          maxAngularVelocity,
-          maxAngularAcceleration,
-          translationKp,
-          rotationKp,
-          positionTolerance,
-          angleTolerance);
-    }
-
-    public DriveToPoseConstraints withTolerance(double position, double angle) {
-      return new DriveToPoseConstraints(
-          maxVelocity,
-          maxAcceleration,
-          maxAngularVelocity,
-          maxAngularAcceleration,
-          translationKp,
-          rotationKp,
-          position,
-          angle);
-    }
-  }
-
-  /** Drives to a pose and stops there. */
-  public static Command driveToPose(
-      Drive drive, Localization localization, Supplier<Pose2d> target) {
-    return driveToPose(drive, localization, target, DriveToPoseConstraints::tuned, 0.0);
-  }
-
-  /** Drives to a pose with fixed constraints. */
-  public static Command driveToPose(
-      Drive drive,
-      Localization localization,
-      Supplier<Pose2d> target,
-      DriveToPoseConstraints constraints,
-      double endVelocity) {
-    return driveToPose(drive, localization, target, () -> constraints, endVelocity);
-  }
-
-  /**
-   * Drives straight to a field pose: a trapezoidal profile on the remaining distance along the line
-   * to the target, plus P feedback, with an independently profiled heading.
-   *
-   * <p>With {@code endVelocity} above zero the robot does not decelerate to a stop, it arrives at
-   * that speed and the command ends at the tolerance radius. Chain several of these for a fast path
-   * through waypoints, with a final one at zero to stop.
-   *
-   * @param target Target pose (re-read each loop, so it may move).
-   * @param constraints Speed limits, gains, and tolerances, read once when the command starts.
-   * @param endVelocity Speed to arrive with, m/s.
-   */
-  public static Command driveToPose(
-      Drive drive,
-      Localization localization,
-      Supplier<Pose2d> target,
-      Supplier<DriveToPoseConstraints> constraintsSupplier,
-      double endVelocity) {
-    return drive
-        .run(
-            coroutine -> {
-              DriveToPoseConstraints constraints = constraintsSupplier.get();
-              ProfiledPIDController distanceController =
-                  new ProfiledPIDController(
-                      constraints.translationKp(),
-                      0.0,
-                      0.0,
-                      new TrapezoidProfile.Constraints(
-                          constraints.maxVelocity(), constraints.maxAcceleration()));
-              ProfiledPIDController headingController =
-                  new ProfiledPIDController(
-                      constraints.rotationKp(),
-                      0.0,
-                      0.0,
-                      new TrapezoidProfile.Constraints(
-                          constraints.maxAngularVelocity(), constraints.maxAngularAcceleration()));
-              headingController.enableContinuousInput(-Math.PI, Math.PI);
-
-              // Seed the profiles from the current motion so a moving start is smooth
-              Pose2d start = localization.getPose();
-              Pose2d goal = target.get();
-              ChassisVelocities fieldVelocity =
-                  drive.getChassisVelocities().toFieldRelative(start.getRotation());
-              Translation2d toGoal = goal.getTranslation().minus(start.getTranslation());
-              double distance = toGoal.getNorm();
-              double closingSpeed =
-                  distance > 1e-6
-                      ? (fieldVelocity.vx * toGoal.getX() + fieldVelocity.vy * toGoal.getY())
-                          / distance
-                      : 0.0;
-              distanceController.reset(distance, -closingSpeed);
-              headingController.reset(start.getRotation().getRadians(), fieldVelocity.omega);
-
-              while (true) {
-                Pose2d pose = localization.getPose();
-                goal = target.get();
-                toGoal = goal.getTranslation().minus(pose.getTranslation());
-                distance = toGoal.getNorm();
-                double headingError =
-                    Math.abs(goal.getRotation().minus(pose.getRotation()).getRadians());
-
-                boolean arrived = distance < constraints.positionTolerance();
-                if (arrived && (endVelocity > 0.0 || headingError < constraints.angleTolerance())) {
-                  break;
-                }
-
-                // Distance is driven to zero; profile velocity is negative while closing
-                double speed =
-                    -(distanceController.calculate(
-                            distance, new TrapezoidProfile.State(0.0, -endVelocity))
-                        + distanceController.getSetpoint().velocity);
-                speed = Math.clamp(speed, -constraints.maxVelocity(), constraints.maxVelocity());
-                if (arrived) speed = 0.0;
-                Translation2d velocity =
-                    distance > 1e-6 ? toGoal.div(distance).times(speed) : Translation2d.ZERO;
-
-                double omega =
-                    headingController.calculate(
-                            pose.getRotation().getRadians(), goal.getRotation().getRadians())
-                        + headingController.getSetpoint().velocity;
-
-                drive.runVelocity(
-                    new ChassisVelocities(velocity.getX(), velocity.getY(), omega)
-                        .toRobotRelative(pose.getRotation()));
-
-                Logger.recordOutput("DriveToPose/Target", goal);
-                Logger.recordOutput("DriveToPose/DistanceMeters", distance);
-                Logger.recordOutput(
-                    "DriveToPose/SetpointDistance", distanceController.getSetpoint().position);
-                coroutine.yield();
-              }
-            })
-        .named("Drive.DriveToPose");
-  }
-
-  // ---------------------------------------------------------------------------------------------
-  // Paths
-  // ---------------------------------------------------------------------------------------------
-
-  private static final TunableNumber PATH_TRANSLATION_KP =
-      new TunableNumber("Path/TranslationKp", 4.0);
-  private static final TunableNumber PATH_ROTATION_KP = new TunableNumber("Path/RotationKp", 5.0);
-  private static final TunableNumber PATH_END_TOLERANCE =
-      new TunableNumber("Path/EndToleranceMeters", 0.04);
-  private static final TunableNumber PATH_LOOKAHEAD = new TunableNumber("Path/LookaheadSecs", 0.1);
-  private static final TunableNumber PATH_STALL_TIMEOUT =
-      new TunableNumber("Path/StallTimeoutSecs", 2.0);
-
-  /**
-   * Follows a smooth path by <b>progress, not time</b>. Each loop the robot is projected onto the
-   * path (searching only forward), and that point is the reference: the trajectory's velocity there
-   * (slightly ahead) is the feedforward, and feedback pulls the robot sideways back onto the path.
-   * So the robot can never fall behind a setpoint that keeps running: if it is slowed, bumped or
-   * blocked, the reference waits with it, and when it is free it re-accelerates along the planned
-   * speed profile (rate-limited to the path's acceleration) from where it actually is, instead of
-   * cutting a corner to catch up.
-   *
-   * <p>The path is generated for the current alliance when the command starts, from the robot's
-   * current speed. Ends when the robot reaches the end (within tolerance), or after the stall
-   * timeout if it makes no progress at all, so a pinned robot doesn't hang an auto.
-   */
-  public static Command followPath(Drive drive, Localization localization, Path path) {
-    return drive
-        .run(
-            coroutine -> {
-              Pose2d pose = localization.getPose();
-              ChassisVelocities measured = drive.getChassisVelocities();
-              Path.Generated generated = path.generate(pose, Math.hypot(measured.vx, measured.vy));
-              var samples = generated.trajectory().getSamples();
-              Logger.recordOutput("Path/Trajectory", generated.poses());
-
-              double kP = PATH_TRANSLATION_KP.get();
-              double kTheta = PATH_ROTATION_KP.get();
-              double tolerance = PATH_END_TOLERANCE.get();
-              double lookahead = PATH_LOOKAHEAD.get();
-              double stallTimeout = PATH_STALL_TIMEOUT.get();
-              double duration = generated.trajectory().duration;
-              Pose2d end = generated.trajectory().end().pose;
-              SlewRateLimiter speedLimiter = new SlewRateLimiter(path.maxAcceleration());
-              speedLimiter.reset(Math.hypot(measured.vx, measured.vy));
-
-              int index = 0;
-              double lastProgressTime = Timer.getTimestamp();
-              double lastProgress = 0.0;
-              while (true) {
-                pose = localization.getPose();
-
-                // Project onto the path, forward only, within the next second of path
-                int best = index;
-                double bestDistance = Double.POSITIVE_INFINITY;
-                double windowEnd = samples.get(index).time + 1.0;
-                for (int j = index; j < samples.size() && samples.get(j).time <= windowEnd; j++) {
-                  double d =
-                      samples.get(j).pose.getTranslation().getDistance(pose.getTranslation());
-                  if (d < bestDistance) {
-                    bestDistance = d;
-                    best = j;
-                  }
-                }
-                index = best;
-                double progress = samples.get(index).time;
-
-                double endError = pose.getTranslation().getDistance(end.getTranslation());
-                boolean atEnd = progress >= duration - 1e-6 || index == samples.size() - 1;
-                if (atEnd && endError < tolerance) break;
-                if (progress > lastProgress + 1e-3) {
-                  lastProgress = progress;
-                  lastProgressTime = Timer.getTimestamp();
-                } else if (Timer.getTimestamp() - lastProgressTime > stallTimeout) {
-                  break; // Pinned or blocked: give the auto back
-                }
-
-                // Feedforward from just ahead of where we are, speed rate-limited from reality
-                var here = samples.get(index);
-                var ahead =
-                    generated.trajectory().sampleAt(Math.min(progress + lookahead, duration));
-                double plannedSpeed = Math.hypot(ahead.velocity.vx, ahead.velocity.vy);
-                double speed = speedLimiter.calculate(plannedSpeed);
-                double scale = plannedSpeed > 1e-6 ? speed / plannedSpeed : 0.0;
-                double vx = ahead.velocity.vx * scale;
-                double vy = ahead.velocity.vy * scale;
-
-                // Feedback back onto the path (cross-track), and to the end point once there
-                Pose2d target = atEnd ? end : here.pose;
-                vx += kP * (target.getX() - pose.getX());
-                vy += kP * (target.getY() - pose.getY());
-
-                double[] heading = generated.headingAt(Math.min(progress + lookahead, duration));
-                double headingError =
-                    MathUtil.angleModulus(heading[0] - pose.getRotation().getRadians());
-                double omega = heading[1] * scale + kTheta * headingError;
-                drive.runVelocity(
-                    new ChassisVelocities(vx, vy, omega).toRobotRelative(pose.getRotation()));
-
-                Logger.recordOutput(
-                    "Path/Setpoint",
-                    new Pose2d(here.pose.getTranslation(), new Rotation2d(heading[0])));
-                Logger.recordOutput("Path/ProgressSecs", progress);
-                Logger.recordOutput("Path/CrossTrackErrorMeters", bestDistance);
-                coroutine.yield();
-              }
-            })
-        .named("Drive.FollowPath");
   }
 
   // ---------------------------------------------------------------------------------------------

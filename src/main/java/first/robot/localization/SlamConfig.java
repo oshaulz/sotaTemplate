@@ -87,6 +87,19 @@ public final class SlamConfig implements Cloneable {
   }
 
   /**
+   * Translation noise per meter of wheel travel while the drive reports slipping (pinned, spinning
+   * out, hit). Around 1 means "the wheels may have moved the robot anywhere from not at all to as
+   * far as they say": vision decides.
+   */
+  public double slipStdDevPerMeter = 1.0;
+
+  /**
+   * Fraction of wheel travel believed while slipping. A pinned or just-hit robot goes nowhere near
+   * as far as its wheels say; one spinning out under acceleration goes some of the way.
+   */
+  public double slipOdometryTrust = 0.25;
+
+  /**
    * Rotation noise for odometry heading deltas. Only used while the gyro is disconnected, since the
    * gyro factor otherwise owns heading.
    */

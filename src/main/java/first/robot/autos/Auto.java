@@ -1,9 +1,8 @@
 package first.robot.autos;
 
-import first.robot.commands.DriveCommands;
-import first.robot.commands.DriveCommands.DriveToPoseConstraints;
+import bline.path.Path;
+import first.robot.commands.AutoDrive;
 import first.robot.localization.Localization;
-import first.robot.subsystems.drive.Drive;
 import first.robot.util.AllianceFlip;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,46 +19,44 @@ import org.wpilib.units.Units;
 /**
  * Fluent auto builder over Commands v3 coroutines. Poses are written in blue-alliance coordinates
  * (see {@code FieldPoses}) and flipped when the auto runs, so one routine serves both alliances.
+ * All driving goes through {@link AutoDrive} (BLine), with the same gains and constraints as teleop
+ * auto-drive.
  *
  * <pre>{@code
- * Auto.create("Two Piece", robot.drive, robot.localization)
+ * Auto.create("Two Piece", robot.autoDrive, robot.localization)
  *     .startAt(FieldPoses.START_CENTER)
  *     .driveTo(FieldPoses.SCORE_CENTER)
  *     .then(robot.intake::eject)
+ *     .alongWith(robot.intake::intakeUntilHeld)
  *     .passThrough(FieldPoses.SCORE_LEFT)
  *     .driveTo(FieldPoses.PICKUP_LEFT)
- *     .then(robot.intake::intakeUntilHeld)
- *     .driveTo(FieldPoses.SCORE_CENTER)
+ *     .followPath("pickup-left-to-score") // drawn in the BLine editor
  *     .then(robot.intake::eject)
- *     .followPath(Path.from(FieldPoses.SCORE_CENTER).through(new Translation2d(5, 6)).to(FieldPoses.PICKUP_LEFT))
  *     .build();
  * }</pre>
  *
- * <p>Steps run in order. {@link #alongWith} starts a command and moves on immediately (e.g. run the
- * intake while driving); it is canceled when the auto ends.
+ * <p>Steps run in order. Consecutive {@link #passThrough} and {@link #driveTo} steps become one
+ * BLine path, so the robot flows through the intermediate poses without stopping. {@link
+ * #alongWith} starts a command and moves on immediately (e.g. run the intake while driving); it is
+ * canceled when the auto ends.
  */
 public final class Auto {
-  /** Default speed for {@link #passThrough(Pose2d)}, m/s. */
-  public static final double DEFAULT_PASS_THROUGH_SPEED = 1.5;
-
-  /** How close {@link #passThrough(Pose2d)} must get before moving on, m. */
-  public static final double PASS_THROUGH_RADIUS = 0.25;
-
   private final String name;
-  private final Drive drive;
+  private final AutoDrive autoDrive;
   private final Localization localization;
   private final List<Consumer<Coroutine>> steps = new ArrayList<>();
   private final List<Pose2d> plannedPath = new ArrayList<>();
+  private final List<Pose2d> passPoses = new ArrayList<>();
 
-  private Auto(String name, Drive drive, Localization localization) {
+  private Auto(String name, AutoDrive autoDrive, Localization localization) {
     this.name = name;
-    this.drive = drive;
+    this.autoDrive = autoDrive;
     this.localization = localization;
   }
 
   /** Starts building an auto. */
-  public static Auto create(String name, Drive drive, Localization localization) {
-    return new Auto(name, drive, localization);
+  public static Auto create(String name, AutoDrive autoDrive, Localization localization) {
+    return new Auto(name, autoDrive, localization);
   }
 
   /**
@@ -68,7 +65,7 @@ public final class Auto {
    */
   public Auto startAt(Pose2d bluePose) {
     plannedPath.add(bluePose);
-    steps.add(
+    addStep(
         coroutine -> {
           if (!localization.isLocalized()) {
             localization.resetPose(AllianceFlip.apply(bluePose));
@@ -77,92 +74,100 @@ public final class Auto {
     return this;
   }
 
-  /** Drives to a pose and stops there. */
+  /** Drives to a pose and stops there, through any poses passed with {@link #passThrough}. */
   public Auto driveTo(Pose2d bluePose) {
-    plannedPath.add(bluePose);
-    steps.add(
-        coroutine ->
-            coroutine.await(
-                DriveCommands.driveToPose(
-                    drive, localization, () -> AllianceFlip.apply(bluePose))));
-    return this;
+    return driveTo(bluePose, new Path.PathConstraints());
   }
 
-  /** Drives to a pose with custom constraints and stops there. */
-  public Auto driveTo(Pose2d bluePose, Supplier<DriveToPoseConstraints> constraints) {
+  /**
+   * Drives to a pose with custom constraints (unset ones use the {@code AutoDrive} defaults) and
+   * stops there, through any poses passed with {@link #passThrough}.
+   */
+  public Auto driveTo(Pose2d bluePose, Path.PathConstraints constraints) {
     plannedPath.add(bluePose);
-    steps.add(
-        coroutine ->
-            coroutine.await(
-                DriveCommands.driveToPose(
-                    drive, localization, () -> AllianceFlip.apply(bluePose), constraints, 0.0)));
-    return this;
-  }
-
-  /** Drives through a pose without stopping, at {@link #DEFAULT_PASS_THROUGH_SPEED}. */
-  public Auto passThrough(Pose2d bluePose) {
-    return passThrough(bluePose, DEFAULT_PASS_THROUGH_SPEED);
-  }
-
-  /** Drives through a pose without stopping, arriving at {@code speed} m/s. */
-  public Auto passThrough(Pose2d bluePose, double speed) {
-    plannedPath.add(bluePose);
-    steps.add(
-        coroutine ->
-            coroutine.await(
-                DriveCommands.driveToPose(
-                    drive,
-                    localization,
-                    () -> AllianceFlip.apply(bluePose),
-                    () ->
-                        DriveToPoseConstraints.tuned().withTolerance(PASS_THROUGH_RADIUS, Math.PI),
-                    speed)));
+    passPoses.add(bluePose);
+    List<Pose2d> poses = List.copyOf(passPoses);
+    passPoses.clear();
+    steps.add(coroutine -> coroutine.await(autoDrive.driveThrough(poses, constraints, true)));
     return this;
   }
 
   /**
-   * Follows a smooth spline path (see {@link Path}). Its waypoints are added to the planned path
-   * preview.
+   * Drives through a pose without stopping, on the way to the next {@link #driveTo}. If another
+   * kind of step comes next, the robot stops here instead.
    */
-  public Auto followPath(Path path) {
-    plannedPath.addAll(
-        path.bluePoints().stream().map(p -> new Pose2d(p, Rotation2d.ZERO)).toList());
-    steps.add(coroutine -> coroutine.await(DriveCommands.followPath(drive, localization, path)));
+  public Auto passThrough(Pose2d bluePose) {
+    plannedPath.add(bluePose);
+    passPoses.add(bluePose);
     return this;
+  }
+
+  /** Follows a BLine path in blue coordinates. Its points are added to the planned path preview. */
+  public Auto followPath(Path bluePath) {
+    plannedPath.addAll(
+        bluePath.getTranslations().stream().map(p -> new Pose2d(p, Rotation2d.ZERO)).toList());
+    addStep(coroutine -> coroutine.await(autoDrive.follow(bluePath)));
+    return this;
+  }
+
+  /**
+   * Follows a path drawn in the BLine editor, from {@code src/main/deploy/autos/paths/<name>.json}.
+   * The file is loaded now, so a missing or broken path fails when the auto is built.
+   */
+  public Auto followPath(String pathName) {
+    return followPath(new Path(pathName));
   }
 
   /** Runs a command to completion. The supplier is called when this step is reached. */
   public Auto then(Supplier<Command> command) {
-    steps.add(coroutine -> coroutine.await(command.get()));
+    addStep(coroutine -> coroutine.await(command.get()));
     return this;
   }
 
   /** Runs an arbitrary action (no requirements) and continues. */
   public Auto thenRun(Runnable action) {
-    steps.add(coroutine -> action.run());
+    addStep(coroutine -> action.run());
     return this;
   }
 
   /** Starts a command in the background and continues immediately. */
   public Auto alongWith(Supplier<Command> command) {
-    steps.add(coroutine -> coroutine.fork(command.get()));
+    addStep(coroutine -> coroutine.fork(command.get()));
     return this;
   }
 
   /** Waits for a fixed time. */
   public Auto waitSeconds(double seconds) {
-    steps.add(coroutine -> coroutine.wait(Units.Seconds.of(seconds)));
+    addStep(coroutine -> coroutine.wait(Units.Seconds.of(seconds)));
     return this;
   }
 
   /** Waits until a condition is true. */
   public Auto waitUntil(BooleanSupplier condition) {
-    steps.add(coroutine -> coroutine.waitUntil(condition));
+    addStep(coroutine -> coroutine.waitUntil(condition));
     return this;
+  }
+
+  /** Adds a step, first stopping at any pending pass-through poses. */
+  private void addStep(Consumer<Coroutine> step) {
+    stopAtPassPoses();
+    steps.add(step);
+  }
+
+  /** A trailing {@link #passThrough} with nothing after it stops at its pose. */
+  private void stopAtPassPoses() {
+    if (!passPoses.isEmpty()) {
+      List<Pose2d> poses = List.copyOf(passPoses);
+      passPoses.clear();
+      steps.add(
+          coroutine ->
+              coroutine.await(autoDrive.driveThrough(poses, new Path.PathConstraints(), true)));
+    }
   }
 
   /** Builds the auto into one command. */
   public Command build() {
+    stopAtPassPoses();
     List<Consumer<Coroutine>> frozenSteps = List.copyOf(steps);
     List<Pose2d> frozenPath = List.copyOf(plannedPath);
     return Command.noRequirements(

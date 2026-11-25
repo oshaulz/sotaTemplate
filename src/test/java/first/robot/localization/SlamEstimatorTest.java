@@ -52,7 +52,27 @@ class SlamEstimatorTest {
   };
 
   private record RunResult(
-      double slamError, double odomError, double headingError, double rms, SlamEstimator slam) {}
+      double slamError,
+      double odomError,
+      double headingError,
+      double rms,
+      double maxError,
+      SlamEstimator slam) {}
+
+  /**
+   * The robot is pinned from {@code start} to {@code end}: it stops, but its wheels keep turning as
+   * if it were still driving. {@code flagged} is whether the drive reports the slip.
+   */
+  private record Pin(double start, double end, boolean flagged) {
+    boolean active(double t) {
+      return t >= start && t < end;
+    }
+
+    /** Where along its lap the pinned robot really is at time t. */
+    double progress(double t) {
+      return t < start ? t : t < end ? start : t - (end - start);
+    }
+  }
 
   private static Map<Integer, Pose3d> layout() {
     Map<Integer, Pose3d> tags = new HashMap<>();
@@ -89,6 +109,15 @@ class SlamEstimatorTest {
       double duration,
       java.util.function.DoubleFunction<Map<Integer, Pose3d>> trueTagsAt,
       SlamEstimator slam) {
+    return run(resetAtStart, duration, trueTagsAt, slam, null);
+  }
+
+  private static RunResult run(
+      boolean resetAtStart,
+      double duration,
+      java.util.function.DoubleFunction<Map<Integer, Pose3d>> trueTagsAt,
+      SlamEstimator slam,
+      Pin pin) {
     Random rng = new Random(4476);
 
     double trueGyroOffset = 0.35; // Robot was not square when the gyro zeroed
@@ -105,14 +134,21 @@ class SlamEstimatorTest {
     double innerSolveMs = 0;
     int iterations = 0;
     double sqErr = 0;
+    double maxErr = 0;
     int errCount = 0;
+    Pose2d truth = truePose(0.0);
 
     for (int step = 0; step <= (int) (duration / DT); step++) {
       double t = step * DT;
-      Pose2d truth = truePose(t);
+      boolean pinned = pin != null && pin.active(t);
+      truth = truePose(pin != null ? pin.progress(t) : t);
 
-      // Odometry: true delta, scaled, plus noise; heading from the (offset) gyro
-      Transform2d delta = new Transform2d(lastTrue, truth);
+      // Odometry: true delta, scaled, plus noise; heading from the (offset) gyro. Pinned, the
+      // wheels keep reporting the motion the robot was trying to make.
+      Transform2d delta =
+          pinned
+              ? new Transform2d(truePose(t - DT), truePose(t))
+              : new Transform2d(lastTrue, truth);
       double gyroYaw =
           truth.getRotation().getRadians() - trueGyroOffset + rng.nextGaussian() * 0.002;
       Translation2d noisyDelta =
@@ -125,11 +161,10 @@ class SlamEstimatorTest {
               new Rotation2d(gyroYaw));
       lastTrue = truth;
 
+      boolean slipping = pinned && pin.flagged();
+      slam.addOdometry(t, odom, gyroYaw, true, slipping);
       if (step == 0 && resetAtStart) {
-        slam.addOdometry(t, odom, gyroYaw, true);
         slam.resetPose(truth);
-      } else {
-        slam.addOdometry(t, odom, gyroYaw, true);
       }
 
       // Capture camera frames from the true world
@@ -158,6 +193,7 @@ class SlamEstimatorTest {
       if (t > 5.0) {
         double err = slam.getEstimatedPose().getTranslation().getDistance(truth.getTranslation());
         sqErr += err * err;
+        maxErr = Math.max(maxErr, err);
         errCount++;
       }
       long start = System.nanoTime();
@@ -181,7 +217,6 @@ class SlamEstimatorTest {
         maxSolveNanos / 1e6,
         slam.getOdometryScale(),
         Math.sqrt(sqErr / Math.max(1, errCount)));
-    Pose2d truth = truePose(duration);
     Pose2d estimate = slam.getEstimatedPose();
     // Odometry alone, aligned to the truth at t=0
     Pose2d odomOnly =
@@ -194,6 +229,7 @@ class SlamEstimatorTest {
         Math.abs(
             MathUtil.angleModulus(estimate.getRotation().minus(truth.getRotation()).getRadians())),
         Math.sqrt(sqErr / Math.max(1, errCount)),
+        maxErr,
         slam);
   }
 
@@ -402,5 +438,87 @@ class SlamEstimatorTest {
         id, error, result.rms(), slam.getMovedTagEvents());
     assertTrue(error < 0.03, "map should re-learn the nudged tag: " + error);
     assertTrue(result.slamError() < 0.05, "pose error " + result.slamError());
+  }
+
+  @Test
+  void flaggedSlipKeepsPoseOnTruth() {
+    // Pinned for 3 s mid-lap with the wheels still turning: about 3 m of odometry that never
+    // happened. With the slip reported, vision should own the pose through it.
+    Pin unflagged = new Pin(15.0, 18.0, false);
+    Pin flagged = new Pin(15.0, 18.0, true);
+    System.out.println("pinned, slip not reported:");
+    var blind =
+        run(
+            true,
+            25.0,
+            t -> layout(),
+            new SlamEstimator(new SlamConfig(), CAMERAS, layout()),
+            unflagged);
+    System.out.println("pinned, slip reported:");
+    var aware =
+        run(
+            true,
+            25.0,
+            t -> layout(),
+            new SlamEstimator(new SlamConfig(), CAMERAS, layout()),
+            flagged);
+    System.out.printf(
+        "max error: unflagged %.3f m, flagged %.3f m; final %.3f / %.3f m%n",
+        blind.maxError(), aware.maxError(), blind.slamError(), aware.slamError());
+    assertTrue(aware.maxError() < 0.5 * blind.maxError(), "reporting slip should help a lot");
+    assertTrue(aware.rms() < 0.5 * blind.rms(), "rms should improve too");
+    assertTrue(aware.maxError() < 0.15, "max error with slip reported: " + aware.maxError());
+    assertTrue(aware.slamError() < 0.02, "final error: " + aware.slamError());
+  }
+
+  @Test
+  void confidenceTracksUncertainty() {
+    SlamEstimator slam = new SlamEstimator(new SlamConfig(), CAMERAS, layout());
+    assertTrue(
+        slam.getPositionStdDevMeters() >= new SlamConfig().unknownStdDevMeters - 1e-9,
+        "unknown before any tag");
+
+    // Sit still for 3 s watching tags. Odometry frame: the true pose, offset gyro of 0.
+    Random rng = new Random(1);
+    Pose2d truth = truePose(0.0);
+    double t = 0.0;
+    double yaw = truth.getRotation().getRadians();
+    Pose2d odom = truth;
+    for (; t < 3.0; t += DT) {
+      slam.addOdometry(t, odom, yaw, true);
+      List<TagObservation> frame = new ArrayList<>();
+      for (int c = 0; c < CAMERAS.length; c++) {
+        for (var entry : layout().entrySet()) {
+          var obs = observe(truth, c, entry.getKey(), entry.getValue(), t, rng);
+          if (obs != null) frame.add(obs);
+        }
+      }
+      slam.addObservations(frame);
+      slam.update();
+    }
+    double seeing = slam.getPositionStdDevMeters();
+    double error = slam.getEstimatedPose().getTranslation().getDistance(truth.getTranslation());
+    System.out.printf(
+        "seeing tags: σ %.3f m, %.2f°; error %.3f m%n",
+        seeing, Math.toDegrees(slam.getHeadingStdDevRad()), error);
+    assertTrue(seeing < 0.05, "should be confident while seeing tags: " + seeing);
+
+    // Drive 4 m blind (no cameras), then 4 m more slipping
+    for (int i = 0; i < 100; i++, t += DT) {
+      odom = odom.plus(new Transform2d(0.04, 0.0, Rotation2d.ZERO));
+      slam.addOdometry(t, odom, yaw, true, false);
+      slam.update();
+    }
+    double blind = slam.getPositionStdDevMeters();
+    for (int i = 0; i < 100; i++, t += DT) {
+      odom = odom.plus(new Transform2d(0.04, 0.0, Rotation2d.ZERO));
+      slam.addOdometry(t, odom, yaw, true, true);
+      slam.update();
+    }
+    double slipping = slam.getPositionStdDevMeters();
+    System.out.printf("blind 4 m: σ %.3f m; then slipping 4 m: σ %.3f m%n", blind, slipping);
+    assertTrue(blind > 2.0 * seeing, "uncertainty should grow without vision");
+    assertTrue(blind < 0.5, "but not wildly over 4 m: " + blind);
+    assertTrue(slipping > 4.0 * blind, "slipping odometry should barely count");
   }
 }
