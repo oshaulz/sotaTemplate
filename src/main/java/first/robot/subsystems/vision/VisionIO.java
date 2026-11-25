@@ -19,6 +19,21 @@ public interface VisionIO {
   public static class VisionIOInputs {
     public boolean connected = false;
     public RawFiducial[] fiducials = new RawFiducial[] {};
+
+    // Configuration problems the backend can detect, turned into alerts by Vision. They are inputs
+    // so replay reproduces the alerts. False means healthy or unknown (the sim reports none).
+
+    /** No camera calibration is published, so only tag centers are usable. */
+    public boolean uncalibrated = false;
+
+    /** The camera is running on its factory calibration rather than one measured for this lens. */
+    public boolean factoryCalibration = false;
+
+    /** The calibration has distortion terms beyond k1, k2, p1, p2, k3, which are ignored. */
+    public boolean unsupportedDistortion = false;
+
+    /** The pipeline runs 3D pose estimation the SLAM doesn't use, which only adds latency. */
+    public boolean poseEstimationEnabled = false;
   }
 
   /**

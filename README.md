@@ -190,10 +190,22 @@ The SLAM needs only each tag's four corners and the camera's calibration. **A ca
 
 | | Do | Don't need |
 |---|---|---|
-| **Limelight** | AprilTag pipeline with **Send Corners** on, and a calibration (Limelight's default calibration works; a custom one is better) | MegaTag 1/2, robot orientation updates |
-| **PhotonVision** | AprilTag pipeline, camera **calibrated at the pipeline's resolution**; 3D mode optional | Multi-tag on coprocessor, `PhotonPoseEstimator` |
+| **Limelight** | AprilTag pipeline with **Send Corners** on, and an uploaded custom calibration (the factory one works, but raises an alert) | MegaTag 1/2, robot orientation updates |
+| **PhotonVision** | AprilTag pipeline in **2D**, camera **calibrated at the pipeline's resolution** (the 2D/3D toggle stays greyed out until it is) | 3D mode, multi-tag on coprocessor, `PhotonPoseEstimator` |
 
 Without corners (no calibration, or Send Corners off), a camera falls back to tag centers. That still works, but is less accurate (see the benchmark).
+
+### Configuration alerts
+
+A misconfigured camera degrades the SLAM without breaking it, so `Vision` raises a WPILib alert per camera (group `Vision`, key `<camera><Problem>`) and prints a driver station warning when one appears. Each must hold for 50 loops (about 1 s) first, and none is raised while the camera is disconnected. The backends report what they detect as logged inputs, so replay raises the same alerts on the same loops.
+
+| Alert | Level | Raised when | Backends |
+|---|---|---|---|
+| `Uncalibrated` | high | no calibration is published, so only tag centers are usable | both |
+| `NoCorners` | high | tags arrive but none have corners (Send Corners off). Holds while no tags are in view | any |
+| `FactoryCalibration` | medium | the Limelight has no uploaded custom calibration | Limelight |
+| `UnsupportedDistortion` | medium | the calibration has nonzero terms beyond k1, k2, p1, p2, k3, which `CameraUndistort` ignores | Limelight |
+| `PoseEstimation` | low | the pipeline runs PnP (3D mode), which the SLAM doesn't use and only adds latency | PhotonVision |
 
 ### How corners are handled
 

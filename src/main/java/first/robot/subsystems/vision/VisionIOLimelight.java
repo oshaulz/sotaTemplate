@@ -35,11 +35,33 @@ public class VisionIOLimelight implements VisionIO {
   public void updateInputs(VisionIOInputs inputs) {
     inputs.connected = limelight.isConnected();
     CameraIntrinsics intrinsics = limelight.getCameraIntrinsics();
+    checkCalibration(intrinsics, inputs);
     List<RawFiducial> fiducials = new ArrayList<>();
     for (LimelightResults frame : limelight.readResultsQueue()) {
       fiducials.addAll(toRawFiducials(frame, intrinsics));
     }
     inputs.fiducials = fiducials.toArray(RawFiducial[]::new);
+  }
+
+  /**
+   * Flags calibration problems. Limelight ships with factory intrinsics, so being calibrated isn't
+   * enough: a custom calibration must be uploaded for corners to be accurate. Public for tests.
+   */
+  public static void checkCalibration(CameraIntrinsics intrinsics, VisionIOInputs inputs) {
+    inputs.uncalibrated =
+        intrinsics == null
+            || intrinsics.cameraMatrix == null
+            || intrinsics.cameraMatrix.length != 9;
+    inputs.factoryCalibration = !inputs.uncalibrated && !intrinsics.customCalibration;
+    // CameraUndistort uses k1, k2, p1, p2, k3; any further nonzero term would be ignored
+    boolean extraTerms = false;
+    if (!inputs.uncalibrated && intrinsics.distortionCoefficients != null) {
+      double[] d = intrinsics.distortionCoefficients;
+      for (int i = 5; i < d.length; i++) {
+        if (d[i] != 0.0) extraTerms = true;
+      }
+    }
+    inputs.unsupportedDistortion = extraTerms;
   }
 
   /** Converts one Limelight frame. Public for tests. */

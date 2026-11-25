@@ -46,6 +46,9 @@ public class VisionIOPhotonVision implements VisionIO {
 
     var cameraMatrix = camera.getCameraMatrix();
     var distCoeffs = camera.getDistCoeffs();
+    // PhotonVision has no factory calibration, and photonlib reports up to the 8 coefficients
+    // OpenCVHelp undistorts with, so only a missing calibration matters here
+    inputs.uncalibrated = cameraMatrix.isEmpty() || distCoeffs.isEmpty();
 
     List<RawFiducial> fiducials = new ArrayList<>();
     for (var result : camera.getAllUnreadResults()) {
@@ -61,7 +64,9 @@ public class VisionIOPhotonVision implements VisionIO {
         double ty = Math.atan(Math.tan(Units.degreesToRadians(target.getPitch())) / Math.cos(tx));
         double dist = distance > 1e-6 ? distance : Double.NaN;
         // A 2D pipeline (no PnP) reports no distance and an ambiguity of -1; that's fine, the SLAM
-        // only needs the corners
+        // only needs the corners. A camera-to-tag transform only comes from PnP (single or
+        // multi-tag), so it shows 3D mode is on. Only known while tags are in view, so it holds.
+        inputs.poseEstimationEnabled = distance > 1e-6;
         double ambiguity = Math.max(0.0, target.getPoseAmbiguity());
 
         double[] corners = null;

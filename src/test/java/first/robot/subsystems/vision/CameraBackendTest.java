@@ -2,6 +2,7 @@ package first.robot.subsystems.vision;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import first.robot.localization.CameraModel;
@@ -227,6 +228,7 @@ class CameraBackendTest {
     }
 
     assertEquals(1, inputs.fiducials.length, "PhotonVision sim should see the tag");
+    assertFalse(inputs.uncalibrated, "the sim camera publishes its calibration");
     var fiducial = inputs.fiducials[0];
     assertEquals(
         Timer.getMonotonicTimestamp(),
