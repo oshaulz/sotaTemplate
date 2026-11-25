@@ -1,0 +1,151 @@
+// Copyright (c) 2021-2026 Littleton Robotics
+// http://github.com/Mechanical-Advantage
+//
+// Use of this source code is governed by a BSD license
+// that can be found in the AdvantageKit-License.md file
+// at the root directory of this project.
+
+package first.robot.subsystems.drive;
+
+import com.ctre.phoenix6.configs.CANcoderConfiguration;
+import com.ctre.phoenix6.configs.TalonFXConfiguration;
+import com.ctre.phoenix6.swerve.SwerveModuleConstants;
+import first.robot.sim.SimWorld;
+import org.wpilib.math.controller.PIDController;
+import org.wpilib.math.geometry.Rotation2d;
+import org.wpilib.math.kinematics.SwerveModulePosition;
+import org.wpilib.math.system.DCMotor;
+import org.wpilib.math.system.Models;
+import org.wpilib.math.util.Units;
+import org.wpilib.simulation.DCMotorSim;
+import org.wpilib.system.Timer;
+
+/**
+ * Physics sim implementation of module IO. The sim models are configured using a set of module
+ * constants from Phoenix. Simulation is always based on voltage control.
+ *
+ * <p>Physics is stepped by {@link SimWorld} so ground truth, the gyro, and the cameras all see the
+ * same instant. The true wheel radius is smaller than the configured one by {@link
+ * SimWorld#WHEEL_ODOMETRY_SCALE} to model worn tread, so wheel odometry over-reads distance the way
+ * a real robot's does; the SLAM should calibrate it out.
+ */
+public class ModuleIOSim implements ModuleIO {
+  // TunerConstants doesn't support separate sim constants, so they are declared locally
+  private static final double DRIVE_KP = 0.05;
+  private static final double DRIVE_KD = 0.0;
+  private static final double DRIVE_KS = 0.0;
+  private static final double DRIVE_KV_ROT =
+      0.91035; // Same units as TunerConstants: (volt * secs) / rotation
+  private static final double DRIVE_KV = 1.0 / Units.rotationsToRadians(1.0 / DRIVE_KV_ROT);
+  private static final double TURN_KP = 8.0;
+  private static final double TURN_KD = 0.0;
+  private static final DCMotor DRIVE_GEARBOX = DCMotor.getKrakenX60Foc(1);
+  private static final DCMotor TURN_GEARBOX = DCMotor.getKrakenX60Foc(1);
+
+  private final DCMotorSim driveSim;
+  private final DCMotorSim turnSim;
+  private final double wheelRadius;
+
+  private boolean driveClosedLoop = false;
+  private boolean turnClosedLoop = false;
+  private final PIDController driveController = new PIDController(DRIVE_KP, 0, DRIVE_KD);
+  private final PIDController turnController = new PIDController(TURN_KP, 0, TURN_KD);
+  private double driveFFVolts = 0.0;
+  private double driveAppliedVolts = 0.0;
+  private double turnAppliedVolts = 0.0;
+
+  public ModuleIOSim(
+      SwerveModuleConstants<TalonFXConfiguration, TalonFXConfiguration, CANcoderConfiguration>
+          constants) {
+    // A DC motor driving an inertia is the gravity-free single-jointed-arm model
+    driveSim =
+        new DCMotorSim(
+            Models.singleJointedArmFromPhysicalConstants(
+                DRIVE_GEARBOX, constants.DriveInertia, constants.DriveMotorGearRatio),
+            DRIVE_GEARBOX);
+    turnSim =
+        new DCMotorSim(
+            Models.singleJointedArmFromPhysicalConstants(
+                TURN_GEARBOX, constants.SteerInertia, constants.SteerMotorGearRatio),
+            TURN_GEARBOX);
+    wheelRadius = constants.WheelRadius;
+
+    // Enable wrapping for turn PID
+    turnController.enableContinuousInput(-Math.PI, Math.PI);
+  }
+
+  /** Runs closed-loop control and advances the physics by one step. Called by {@link SimWorld}. */
+  public void step(double dt) {
+    if (driveClosedLoop) {
+      driveAppliedVolts = driveFFVolts + driveController.calculate(driveSim.getAngularVelocity());
+    } else {
+      driveController.reset();
+    }
+    if (turnClosedLoop) {
+      turnAppliedVolts = turnController.calculate(turnSim.getAngularPosition());
+    } else {
+      turnController.reset();
+    }
+
+    driveSim.setInputVoltage(Math.clamp(driveAppliedVolts, -12.0, 12.0));
+    turnSim.setInputVoltage(Math.clamp(turnAppliedVolts, -12.0, 12.0));
+    driveSim.update(dt);
+    turnSim.update(dt);
+  }
+
+  /** Returns where the wheel actually is, for ground truth. */
+  public SwerveModulePosition getTruePosition() {
+    return new SwerveModulePosition(
+        driveSim.getAngularPosition() * wheelRadius / SimWorld.WHEEL_ODOMETRY_SCALE,
+        new Rotation2d(turnSim.getAngularPosition()));
+  }
+
+  @Override
+  public void updateInputs(ModuleIOInputs inputs) {
+    // Update drive inputs
+    inputs.driveConnected = true;
+    inputs.drivePositionRad = driveSim.getAngularPosition();
+    inputs.driveVelocityRadPerSec = driveSim.getAngularVelocity();
+    inputs.driveAppliedVolts = driveAppliedVolts;
+    inputs.driveCurrentAmps = Math.abs(driveSim.getCurrentDraw());
+
+    // Update turn inputs
+    inputs.turnConnected = true;
+    inputs.turnEncoderConnected = true;
+    inputs.turnAbsolutePosition = new Rotation2d(turnSim.getAngularPosition());
+    inputs.turnPosition = new Rotation2d(turnSim.getAngularPosition());
+    inputs.turnVelocityRadPerSec = turnSim.getAngularVelocity();
+    inputs.turnAppliedVolts = turnAppliedVolts;
+    inputs.turnCurrentAmps = Math.abs(turnSim.getCurrentDraw());
+
+    // Update odometry inputs (50Hz because high-frequency odometry in sim doesn't matter)
+    inputs.odometryTimestamps = new double[] {Timer.getMonotonicTimestamp()};
+    inputs.odometryDrivePositionsRad = new double[] {inputs.drivePositionRad};
+    inputs.odometryTurnPositions = new Rotation2d[] {inputs.turnPosition};
+  }
+
+  @Override
+  public void setDriveOpenLoop(double output) {
+    driveClosedLoop = false;
+    driveAppliedVolts = output;
+  }
+
+  @Override
+  public void setTurnOpenLoop(double output) {
+    turnClosedLoop = false;
+    turnAppliedVolts = output;
+  }
+
+  @Override
+  public void setDriveVelocity(double velocityRadPerSec) {
+    driveClosedLoop = true;
+    driveFFVolts = DRIVE_KS * Math.signum(velocityRadPerSec) + DRIVE_KV * velocityRadPerSec;
+    driveController.setSetpoint(velocityRadPerSec);
+  }
+
+  @Override
+  public void setTurnPosition(Rotation2d rotation) {
+    turnClosedLoop = true;
+    turnController.setSetpoint(rotation.getRadians());
+  }
+}

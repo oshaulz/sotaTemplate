@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 458" width="860" height="458" role="img" aria-label="Position error on identical simulated matches">
+<rect width="860" height="458" rx="8" fill="#1a1a19"/>
+<text x="24" y="34" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="17" font-weight="600" text-anchor="start">Position error on identical simulated matches</text>
+<text x="24" y="56" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">RMS over 60 s of driving, lower is better. Same odometry, gyro and camera frames for every estimator.</text>
+<rect x="24" y="70" width="12" height="12" rx="3" fill="#d95926"/>
+<text x="42" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">PhotonVision + pose estimator</text>
+<rect x="273" y="70" width="12" height="12" rx="3" fill="#199e70"/>
+<text x="291" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">SLAM, tag centers</text>
+<rect x="438" y="70" width="12" height="12" rx="3" fill="#3987e5"/>
+<text x="456" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">SLAM, tag corners (default)</text>
+<line x1="230.0" y1="96" x2="230.0" y2="418" stroke="#383835" stroke-width="1"/>
+<text x="230" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0</text>
+<line x1="338.0" y1="96" x2="338.0" y2="418" stroke="#2c2c2a" stroke-width="1"/>
+<text x="338" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">10</text>
+<line x1="446.0" y1="96" x2="446.0" y2="418" stroke="#2c2c2a" stroke-width="1"/>
+<text x="446" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">20</text>
+<line x1="554.0" y1="96" x2="554.0" y2="418" stroke="#2c2c2a" stroke-width="1"/>
+<text x="554" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">30</text>
+<line x1="662.0" y1="96" x2="662.0" y2="418" stroke="#2c2c2a" stroke-width="1"/>
+<text x="662" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">40</text>
+<line x1="770.0" y1="96" x2="770.0" y2="418" stroke="#2c2c2a" stroke-width="1"/>
+<text x="770" y="436" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">50 cm</text>
+<text x="24" y="138" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Field matches the layout</text>
+<path d="M230.0 104.0 H348.5 Q352.5 104.0 352.5 108.0 V118.0 Q352.5 122.0 348.5 122.0 H230.0 Z" fill="#d95926"/>
+<text x="359" y="117" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">11.3 cm</text>
+<path d="M230.0 124.0 H289.2 Q293.2 124.0 293.2 128.0 V138.0 Q293.2 142.0 289.2 142.0 H230.0 Z" fill="#199e70"/>
+<text x="299" y="137" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">5.9 cm</text>
+<path d="M230.0 144.0 H237.5 Q241.5 144.0 241.5 148.0 V158.0 Q241.5 162.0 237.5 162.0 H230.0 Z" fill="#3987e5"/>
+<text x="247" y="157" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.1 cm</text>
+<text x="24" y="222" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Misplaced tag</text>
+<path d="M230.0 188.0 H402.8 Q406.8 188.0 406.8 192.0 V202.0 Q406.8 206.0 402.8 206.0 H230.0 Z" fill="#d95926"/>
+<text x="413" y="201" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">16.4 cm</text>
+<path d="M230.0 208.0 H290.4 Q294.4 208.0 294.4 212.0 V222.0 Q294.4 226.0 290.4 226.0 H230.0 Z" fill="#199e70"/>
+<text x="300" y="221" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">6.0 cm</text>
+<path d="M230.0 228.0 H239.0 Q243.0 228.0 243.0 232.0 V242.0 Q243.0 246.0 239.0 246.0 H230.0 Z" fill="#3987e5"/>
+<text x="249" y="241" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.2 cm</text>
+<text x="24" y="306" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Tag nudged mid-match</text>
+<path d="M230.0 272.0 H413.8 Q417.8 272.0 417.8 276.0 V286.0 Q417.8 290.0 413.8 290.0 H230.0 Z" fill="#d95926"/>
+<text x="424" y="285" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">17.4 cm</text>
+<path d="M230.0 292.0 H290.0 Q294.0 292.0 294.0 296.0 V306.0 Q294.0 310.0 290.0 310.0 H230.0 Z" fill="#199e70"/>
+<text x="300" y="305" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">5.9 cm</text>
+<path d="M230.0 312.0 H238.1 Q242.1 312.0 242.1 316.0 V326.0 Q242.1 330.0 238.1 330.0 H230.0 Z" fill="#3987e5"/>
+<text x="248" y="325" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.1 cm</text>
+<text x="24" y="390" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Noisy single camera</text>
+<path d="M230.0 356.0 H754.0 Q758.0 356.0 758.0 360.0 V370.0 Q758.0 374.0 754.0 374.0 H230.0 Z" fill="#d95926"/>
+<text x="764" y="369" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">48.9 cm</text>
+<path d="M230.0 376.0 H464.9 Q468.9 376.0 468.9 380.0 V390.0 Q468.9 394.0 464.9 394.0 H230.0 Z" fill="#199e70"/>
+<text x="475" y="389" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">22.1 cm</text>
+<path d="M230.0 396.0 H342.9 Q346.9 396.0 346.9 400.0 V410.0 Q346.9 414.0 342.9 414.0 H230.0 Z" fill="#3987e5"/>
+<text x="353" y="409" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">10.8 cm</text>
+</svg>
