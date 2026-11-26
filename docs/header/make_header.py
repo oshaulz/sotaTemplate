@@ -119,7 +119,7 @@ def main():
     svg.append(
         f'<text x="75" y="192" fill="{GREY}" font-family="{FONT}" font-size="14" '
         f'font-weight="400" letter-spacing="0.3">2027 Systemcore · Commands v3 · '
-        f"AdvantageKit · Sleipnir</text>"
+        f"AdvantageKit · BLine</text>"
     )
 
     # Divider, as in the CMRA header

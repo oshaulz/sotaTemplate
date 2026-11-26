@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 290" width="860" height="290" role="img" aria-label="More frames don't help; a longer window does">
+<rect width="860" height="290" rx="8" fill="#fcfcfb"/>
+<text x="24" y="34" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="17" font-weight="600" text-anchor="start">More frames don't help; a longer window does</text>
+<text x="24" y="56" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">SLAM, tag corners, RMS on a clean field. 200 Hz odometry fills the gaps between frames.</text>
+<rect x="24" y="70" width="12" height="12" rx="3" fill="#eb6834"/>
+<text x="42" y="81" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">40 keyframes (default)</text>
+<rect x="224" y="70" width="12" height="12" rx="3" fill="#1baf7a"/>
+<text x="242" y="81" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">60 keyframes</text>
+<rect x="354" y="70" width="12" height="12" rx="3" fill="#2a78d6"/>
+<text x="372" y="81" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">100 keyframes</text>
+<line x1="230.0" y1="96" x2="230.0" y2="250" stroke="#c3c2b7" stroke-width="1"/>
+<text x="230" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0</text>
+<line x1="320.0" y1="96" x2="320.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="320" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0.2</text>
+<line x1="410.0" y1="96" x2="410.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="410" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0.4</text>
+<line x1="500.0" y1="96" x2="500.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="500" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0.6</text>
+<line x1="590.0" y1="96" x2="590.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="590" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0.8</text>
+<line x1="680.0" y1="96" x2="680.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="680" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">1</text>
+<line x1="770.0" y1="96" x2="770.0" y2="250" stroke="#e1e0d9" stroke-width="1"/>
+<text x="770" y="268" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">1.2 cm</text>
+<text x="24" y="138" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">30 fps, 1000 px</text>
+<path d="M230.0 104.0 H586.0 Q590.0 104.0 590.0 108.0 V118.0 Q590.0 122.0 586.0 122.0 H230.0 Z" fill="#eb6834"/>
+<text x="596" y="117" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+<path d="M230.0 124.0 H586.0 Q590.0 124.0 590.0 128.0 V138.0 Q590.0 142.0 586.0 142.0 H230.0 Z" fill="#1baf7a"/>
+<text x="596" y="137" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+<path d="M230.0 144.0 H586.0 Q590.0 144.0 590.0 148.0 V158.0 Q590.0 162.0 586.0 162.0 H230.0 Z" fill="#2a78d6"/>
+<text x="596" y="157" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+<text x="24" y="222" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">100 fps, 2× Limelight 4</text>
+<path d="M230.0 188.0 H766.0 Q770.0 188.0 770.0 192.0 V202.0 Q770.0 206.0 766.0 206.0 H230.0 Z" fill="#eb6834"/>
+<text x="776" y="201" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.2 cm</text>
+<path d="M230.0 208.0 H676.0 Q680.0 208.0 680.0 212.0 V222.0 Q680.0 226.0 676.0 226.0 H230.0 Z" fill="#1baf7a"/>
+<text x="686" y="221" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.0 cm</text>
+<path d="M230.0 228.0 H586.0 Q590.0 228.0 590.0 232.0 V242.0 Q590.0 246.0 586.0 246.0 H230.0 Z" fill="#2a78d6"/>
+<text x="596" y="241" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+</svg>

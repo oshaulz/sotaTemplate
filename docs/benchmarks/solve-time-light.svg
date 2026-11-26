@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 386" width="860" height="386" role="img" aria-label="Solve time per update">
+<rect width="860" height="386" rx="8" fill="#fcfcfb"/>
+<text x="24" y="34" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="17" font-weight="600" text-anchor="start">Solve time per update</text>
+<text x="24" y="56" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">Solver and keyframes in the window. Mean wall-clock on a laptop, nothing else running.</text>
+<rect x="24" y="70" width="12" height="12" rx="3" fill="#eb6834"/>
+<text x="42" y="81" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">Mean per solve</text>
+<line x1="230.0" y1="96" x2="230.0" y2="346" stroke="#c3c2b7" stroke-width="1"/>
+<text x="230" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0</text>
+<line x1="338.0" y1="96" x2="338.0" y2="346" stroke="#e1e0d9" stroke-width="1"/>
+<text x="338" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">5</text>
+<line x1="446.0" y1="96" x2="446.0" y2="346" stroke="#e1e0d9" stroke-width="1"/>
+<text x="446" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">10</text>
+<line x1="554.0" y1="96" x2="554.0" y2="346" stroke="#e1e0d9" stroke-width="1"/>
+<text x="554" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">15</text>
+<line x1="662.0" y1="96" x2="662.0" y2="346" stroke="#e1e0d9" stroke-width="1"/>
+<text x="662" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">20</text>
+<line x1="770.0" y1="96" x2="770.0" y2="346" stroke="#e1e0d9" stroke-width="1"/>
+<text x="770" y="364" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">25 ms</text>
+<text x="24" y="118" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Autodiff, 25 (old default)</text>
+<path d="M230.0 104.0 H524.9 Q528.9 104.0 528.9 108.0 V118.0 Q528.9 122.0 524.9 122.0 H230.0 Z" fill="#eb6834"/>
+<text x="535" y="117" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">13.8 ms</text>
+<text x="24" y="162" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Autodiff, 40</text>
+<path d="M230.0 148.0 H720.4 Q724.4 148.0 724.4 152.0 V162.0 Q724.4 166.0 720.4 166.0 H230.0 Z" fill="#eb6834"/>
+<text x="730" y="161" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">22.9 ms</text>
+<text x="24" y="206" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Gauss-Newton, 25</text>
+<path d="M230.0 192.0 H232.4 Q234.8 192.0 234.8 194.4 V207.6 Q234.8 210.0 232.4 210.0 H230.0 Z" fill="#eb6834"/>
+<text x="241" y="205" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.22 ms</text>
+<text x="24" y="250" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Gauss-Newton, 40 (default)</text>
+<path d="M230.0 236.0 H237.2 Q241.2 236.0 241.2 240.0 V250.0 Q241.2 254.0 237.2 254.0 H230.0 Z" fill="#eb6834"/>
+<text x="247" y="249" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.52 ms</text>
+<text x="24" y="294" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Gauss-Newton, 60</text>
+<path d="M230.0 280.0 H252.6 Q256.6 280.0 256.6 284.0 V294.0 Q256.6 298.0 252.6 298.0 H230.0 Z" fill="#eb6834"/>
+<text x="263" y="293" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">1.2 ms</text>
+<text x="24" y="338" fill="#0b0b0b" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Gauss-Newton, 100</text>
+<path d="M230.0 324.0 H328.2 Q332.2 324.0 332.2 328.0 V338.0 Q332.2 342.0 328.2 342.0 H230.0 Z" fill="#eb6834"/>
+<text x="338" y="337" fill="#52514e" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">4.7 ms</text>
+</svg>

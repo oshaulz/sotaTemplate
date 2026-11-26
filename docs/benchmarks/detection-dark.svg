@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 374" width="860" height="374" role="img" aria-label="What the cameras see matters more than how often">
+<rect width="860" height="374" rx="8" fill="#1a1a19"/>
+<text x="24" y="34" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="17" font-weight="600" text-anchor="start">What the cameras see matters more than how often</text>
+<text x="24" y="56" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">RMS. Far tags (beyond 7 m) kept as bearings, or dropped.</text>
+<rect x="24" y="70" width="12" height="12" rx="3" fill="#d95926"/>
+<text x="42" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">SLAM, far tags kept (default)</text>
+<rect x="273" y="70" width="12" height="12" rx="3" fill="#199e70"/>
+<text x="291" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">SLAM, far tags dropped</text>
+<rect x="473" y="70" width="12" height="12" rx="3" fill="#3987e5"/>
+<text x="491" y="81" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">PhotonVision + pose estimator</text>
+<line x1="230.0" y1="96" x2="230.0" y2="334" stroke="#383835" stroke-width="1"/>
+<text x="230" y="352" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">0</text>
+<line x1="365.0" y1="96" x2="365.0" y2="334" stroke="#2c2c2a" stroke-width="1"/>
+<text x="365" y="352" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">10</text>
+<line x1="500.0" y1="96" x2="500.0" y2="334" stroke="#2c2c2a" stroke-width="1"/>
+<text x="500" y="352" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">20</text>
+<line x1="635.0" y1="96" x2="635.0" y2="334" stroke="#2c2c2a" stroke-width="1"/>
+<text x="635" y="352" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">30</text>
+<line x1="770.0" y1="96" x2="770.0" y2="334" stroke="#2c2c2a" stroke-width="1"/>
+<text x="770" y="352" fill="#898781" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="middle">40 cm</text>
+<text x="24" y="138" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Clean</text>
+<path d="M230.0 104.0 H236.8 Q240.8 104.0 240.8 108.0 V118.0 Q240.8 122.0 236.8 122.0 H230.0 Z" fill="#d95926"/>
+<text x="247" y="117" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+<path d="M230.0 124.0 H236.8 Q240.8 124.0 240.8 128.0 V138.0 Q240.8 142.0 236.8 142.0 H230.0 Z" fill="#199e70"/>
+<text x="247" y="137" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">0.8 cm</text>
+<path d="M230.0 144.0 H443.4 Q447.4 144.0 447.4 148.0 V158.0 Q447.4 162.0 443.4 162.0 H230.0 Z" fill="#3987e5"/>
+<text x="453" y="157" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">16.1 cm</text>
+<text x="24" y="222" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">1 noisy camera (3 px)</text>
+<path d="M230.0 188.0 H280.0 Q284.0 188.0 284.0 192.0 V202.0 Q284.0 206.0 280.0 206.0 H230.0 Z" fill="#d95926"/>
+<text x="290" y="201" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">4.0 cm</text>
+<path d="M230.0 208.0 H280.0 Q284.0 208.0 284.0 212.0 V222.0 Q284.0 226.0 280.0 226.0 H230.0 Z" fill="#199e70"/>
+<text x="290" y="221" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">4.0 cm</text>
+<path d="M230.0 228.0 H641.8 Q645.8 228.0 645.8 232.0 V242.0 Q645.8 246.0 641.8 246.0 H230.0 Z" fill="#3987e5"/>
+<text x="652" y="241" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">30.8 cm</text>
+<text x="24" y="306" fill="#f0efec" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="500" text-anchor="start">Far tags only</text>
+<path d="M230.0 272.0 H338.1 Q342.1 272.0 342.1 276.0 V286.0 Q342.1 290.0 338.1 290.0 H230.0 Z" fill="#d95926"/>
+<text x="348" y="285" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">8.3 cm</text>
+<path d="M230.0 292.0 H404.2 Q408.2 292.0 408.2 296.0 V306.0 Q408.2 310.0 404.2 310.0 H230.0 Z" fill="#199e70"/>
+<text x="414" y="305" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">13.2 cm</text>
+<path d="M230.0 312.0 H766.0 Q770.0 312.0 770.0 316.0 V326.0 Q770.0 330.0 766.0 330.0 H230.0 Z" fill="#3987e5"/>
+<text x="776" y="325" fill="#c3c2b7" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">127 cm →</text>
+</svg>

@@ -1,4 +1,4 @@
-<img src="docs/header/sota-github-header.svg" alt="sotaTemplate: FRC swerve with built-in SLAM. 2027 Systemcore, Commands v3, AdvantageKit, Sleipnir" width="100%">
+<img src="docs/header/sota-github-header.svg" alt="sotaTemplate: FRC swerve with built-in SLAM. 2027 Systemcore, Commands v3, AdvantageKit, BLine" width="100%">
 
 A opinionated 2027 (Systemcore) FIRST Robotics Competition template
 
@@ -7,10 +7,10 @@ A opinionated 2027 (Systemcore) FIRST Robotics Competition template
 
 It is based on the AdvantageKit [TalonFX swerve](https://docs.advantagekit.org/getting-started/template-projects/talonfx-swerve-template/) and [vision](https://docs.advantagekit.org/getting-started/template-projects/vision-template) templates. Two things replace their pose estimation and pathing:
 
-- **SLAM localization.** A sliding-window factor graph over gyro, 200 Hz wheel odometry and the raw corners of every AprilTag, solved on a second CPU core with [Sleipnir](https://github.com/SleipnirGroup/Sleipnir). Sleipnir ships inside WPILib 2027 as `org.wpilib.math.optimization`, so no extra dependency is needed. This replaces `SwerveDrivePoseEstimator`, MegaTag and PhotonVision's multi-tag estimator.
+- **SLAM localization.** A sliding-window factor graph over gyro, 200 Hz wheel odometry and the raw corners of every AprilTag, solved every loop in about half a millisecond. It replaces `SwerveDrivePoseEstimator`, MegaTag and PhotonVision's multi-tag estimator.
 - **[BLine](https://docs.bline.run) for every automatic drive.** Autos and teleop auto-drive share one follower, one set of gains and one set of constraints. Paths are drawn in the [BLine editor](https://bline.run) or written in code, and followed by progress, not time, so the robot can never fall behind its path. There is no PathPlanner.
 
-**In our [benchmark](docs/benchmarks/RESULTS.md) the SLAM is about 1 cm RMS, where the usual PhotonVision + pose estimator pipeline is 11–17 cm** on the same simulated matches.
+**In our [benchmark](docs/benchmarks/RESULTS.md) the SLAM is about 1 cm RMS, where the usual PhotonVision + pose estimator pipeline is about 16 cm** on the same simulated matches.
 
 It also comes with batteries included, all working in simulation and on the robot:
 
@@ -99,88 +99,82 @@ You need JDK 25, which the 2027 WPILib installer provides. If your `~/.gradle/gr
 
 ## Simultaneous Localization and Mapping algorithm
 
-Every keyframe (one per camera frame, plus odometry-only ones every 0.5 m, 25° or 0.5 s) gets a pose variable `(x, y, θ)`. Every tag seen in the window gets a pose variable `(x, y, yaw)`, with its height and tilt from the layout. One scalar each is solved for the gyro-to-field offset and the wheel odometry scale. The solver minimizes the sum of these factors:
+Every keyframe (one per camera frame, plus odometry-only ones every 0.5 m, 25° or 0.5 s) gets a pose `(x, y, θ)`. Every tag in the window gets `(x, y, yaw)`, with height and tilt from the layout. One scalar each is solved for the gyro offset and the wheel odometry scale. The solver minimizes:
 
 | Factor | Residual | Why |
 |---|---|---|
-| Gyro | `θₖ − (gyroₖ + offset)` | The gyro owns heading. The solver finds the offset, so it never needs zeroing. |
-| Odometry | wheel translation between consecutive keyframes, in the earlier keyframe's frame, times `scale` | This is independent of the heading offset. `scale` calibrates tread wear online. Travel while slipping is discounted and much less certain. See [Slip and collisions](#slip-and-collisions). |
-| Tag corners | each of the tag's four corners, placed in 3D from the tag pose, carried through the robot pose and the camera's full 3D mount, versus where the camera saw it | The default. About 1 px of noise per corner. It pins position, heading and the tag's own yaw. |
-| Tag center | bearing and range to the tag | Fallback when a camera reports no corners. |
-| Window prior | the oldest keyframe's pose | Summarizes everything that slid out of the window. |
-| Tag prior | the surveyed layout plus evidence learned from past sightings | The mapping half. See [The map](#the-map-learned-tags-that-survive-reboots). |
+| Gyro | `θₖ − (gyroₖ + offset)` | The gyro owns heading; the offset is solved, so it never needs zeroing. |
+| Odometry | wheel translation between keyframes, in the earlier keyframe's frame, times `scale` | `scale` calibrates tread wear online. Travel while slipping is discounted. See [Slip and collisions](#slip-and-collisions). |
+| Tag corners | each corner, placed from the tag pose through the robot pose and the camera's 3D mount, against where the camera saw it | The default. Pins position, heading and the tag's own yaw. |
+| Tag center | bearing, and range up to `rangeTrustMeters` (7 m) | Without corners, and for every tag beyond 7 m, where range from apparent size is unreliable. |
+| Window prior | the oldest keyframe's pose | Summarizes what slid out of the window. |
+| Tag prior | the surveyed layout plus what past sightings learned | The mapping half. See [The map](#the-map-learned-tags-that-survive-reboots). |
 
-Vision factors use a pseudo-Huber kernel, and gross outliers are gated out before they enter.
+- **Robust.** Vision factors use a pseudo-Huber kernel; gross outliers are gated out first.
+- **Multi-tag, stereo and multi-frame for free.** Each sighting is one factor on shared variables, so a single frame never has to produce a pose and planar ambiguity can't flip it.
+- **Fast.** The default solver (`SlamConfig.solver = GAUSS_NEWTON`) uses hand-derived Jacobians and a damped Gauss-Newton step: about 0.5 ms at 40 keyframes on a laptop. It runs inside the loop, so the pose is never stale. `AUTODIFF` (WPILib's Sleipnir) minimizes the same cost and agrees to nanometers, but is about 40× slower and needs `solveLatencyLoops = 3` on a second core.
+- **Deterministic.** Iteration-bounded, never reads a clock, and uses `StrictMath`, so log replay reproduces every pose.
 
-**Multi-tag, stereo and multi-frame constraints are automatic.** Each sighting is one factor on shared variables. Two tags in one frame pin down position and heading. Two cameras on one tag triangulate it. One tag seen from several keyframes constrains both the tag and the path. None of these cases is coded specially. That is also why there is no planar-ambiguity problem: a single frame never has to produce a pose on its own.
-
-**It runs on its own core.** Each solve works on a snapshot of the window on a background thread and is applied exactly `solveLatencyLoops` loops later (default 3, which is 60 ms). The robot loop never waits unless a solve overruns that budget, and between solves the pose is carried forward by 200 Hz odometry.
-
-**Replay determinism.** The result is applied at a fixed loop, not "whenever it finishes", and the solver is bounded by iteration count, not by a clock. `SlamEstimator` never reads time; it only uses timestamps that come through the logged inputs. Log replay therefore reproduces the same poses. Solve time is logged for diagnostics only.
-
-**Cost.** On a desktop a solve with corners averages about 12 ms (2 warm-started Newton iterations, 25 keyframes, two cameras). Check `Localization/Solve/{BuildMs,SolveMs}` on the CM5. If it's too slow, raise `solveLatencyLoops` or lower `maxKeyframes` (not below about 15).
+On the robot, check `Localization/Solve/{BuildMs,SolveMs}`. Too slow: lower `maxKeyframes` or set `solveLatencyLoops`.
 
 ### Results
 
-From [`docs/benchmarks/RESULTS.md`](docs/benchmarks/RESULTS.md) (`./gradlew benchmark`). Every estimator gets the same simulated matches: 60 s of driving, odometry that over-reads by 3%, an unknown gyro offset, and two cameras reporting raw corners with 1 px of noise. Values are position RMS.
+[`docs/benchmarks/RESULTS.md`](docs/benchmarks/RESULTS.md) (`./gradlew benchmark`): identical simulated matches for every estimator, mean of 5 seeds.
 
-<img src="docs/benchmarks/position-error-dark.svg" alt="Position error by scenario: PhotonVision + pose estimator 11 to 49 cm, SLAM on tag centers 6 to 22 cm, SLAM on tag corners 1 to 11 cm" width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmarks/position-error-dark.svg">
+  <img src="docs/benchmarks/position-error-light.svg" alt="Position error by scenario: PhotonVision + pose estimator 16 to 127 cm, SLAM on tag centers 5 to 28 cm, SLAM on tag corners 0.8 to 8 cm" width="100%">
+</picture>
 
-| Scenario | PhotonVision + pose estimator | SLAM, tag centers | SLAM, corners (default) |
-|---|---|---|---|
-| Field matches the layout | 11.3 cm | 5.9 cm | **1.1 cm** |
-| One tag 15 cm off the layout | 16.4 cm | 6.0 cm | **1.2 cm** |
-| A tag knocked 20 cm mid-match | 17.4 cm | 5.9 cm | **1.1 cm** |
-| One camera, 3 px noise | 48.9 cm | 22.1 cm | **10.8 cm** |
-
-PhotonVision's multi-tag PnP is excellent with three or more tags in view. With one tag, or two on the same face, it can flip to the mirror-image solution, and those flips dominate its error. The report has p95, max, heading, tag-map error and solve time for every configuration.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmarks/solve-time-dark.svg">
+  <img src="docs/benchmarks/solve-time-light.svg" alt="Solve time: autodiff 14 to 23 ms, Gauss-Newton 0.2 to 4.7 ms" width="100%">
+</picture>
 
 ### Tuning
 
-Everything is in `SlamConfig` and is also live-tunable under `/Tuning/Slam`. Start with the camera noise in `VisionConstants.CAMERAS`, then:
+Everything is in `SlamConfig`, live-tunable under `/Tuning/Slam`. Set the camera noise in `VisionConstants.CAMERAS` first, then:
 
-- Check `Localization/VisionLagSecs` first. It should read a few tens of milliseconds. Anything else means camera and odometry timestamps are on different clocks: every observation will fall outside the window or be rejected, and nothing else will look obviously wrong.
-- `Localization/QC/GateRejections` climbing: camera timestamps or `robotToCamera` are wrong. Fix those before loosening `outlierGateSigma`.
-- `Localization/QC/TagResidualSigma` should sit around 1 for every tag. One tag far above the rest is moved or misdetected; all of them high means the camera calibration or mount is off.
+- `Localization/VisionLagSecs` should be a few tens of ms. Anything else means camera and odometry clocks disagree, and every sighting is silently rejected.
+- `Localization/QC/GateRejections` climbing: camera timestamps or `robotToCamera` are wrong.
+- `Localization/QC/TagResidualSigma` should be about 1 for every tag. One high tag is moved or misdetected; all high means calibration or mount.
 - `Localization/OdometryScale` far from 1.0: run the wheel radius characterization.
-- `SimWorld/TruePose` against `Localization/EstimatedPose` against `Odometry/Raw` is the fastest way to see the SLAM working.
+- `maxKeyframes` sets the window's length in time. See [Cameras](#cameras-detection-over-frame-rate).
 
 ### Before the robot is localized
 
-Heading is assumed to be "facing away from your own driver station" (offset 0 on blue, π on red) until a tag is seen. After that the solver corrects it. Autos call `resetPose` only when vision hasn't localized the robot yet. The B button resets heading manually; you shouldn't need it once tags are visible.
+Until a tag is seen, heading is assumed to face away from your driver station (offset 0 on blue, π on red); the solver corrects it after. Autos call `resetPose` only if vision hasn't localized yet. B resets heading manually.
 
 ### Slip and collisions
 
-`TractionMonitor` checks the wheels every loop. Any one of three checks flags slip:
+`TractionMonitor` flags slip every loop when any of these fires:
 
-- **Scrub:** the four modules disagree with each other. A rigid chassis can only move one way, so the residual after the best fit is a wheel sliding sideways or spinning.
-- **Yaw rate:** the wheels say the robot is turning at a different rate than the gyro.
-- **Accelerometer:** the wheels' velocity disagrees with the IMU's. The IMU velocity follows the wheels while they agree on acceleration, and is left alone while they don't. An IMU only feels changes, so this catches being hit or released with the wheels spinning. Vision handles the steady state.
+- **Scrub:** the four modules disagree with the best rigid-body fit (a wheel sliding or spinning).
+- **Yaw rate:** wheels and gyro disagree on turn rate.
+- **Accelerometer:** wheel velocity disagrees with the IMU's. The IMU velocity follows the wheels only while their accelerations agree and neither check above fires, so it catches hits and releases; vision handles the steady state.
 
-A collision is a horizontal acceleration spike above `Traction/CollisionThresholdG`. It is logged on its own and not counted as slip: the spike when a pinned robot is released is the wheels gripping again.
+A collision (acceleration above `Traction/CollisionThresholdG`) is logged separately, not as slip.
 
-Each odometry sample carries the slip flag to the SLAM. It puts a keyframe where slip starts and stops, believes only `slipOdometryTrust` (25%) of the travel in between, with a σ of `slipStdDevPerMeter` (1 m per meter), and widens the outlier gate by the same amount, so the sightings that will fix the pose aren't rejected. On a synthetic 3 s pin this cuts the worst error from 29 cm to 11 cm. Watch `Drive/Traction/*`; `Drive.isSlipping()` and `Drive.hadCollision()` are there for your own code.
+The SLAM gets the slip flag with every odometry sample. It keyframes where slip starts and stops, believes only `slipOdometryTrust` (25%) of the travel between, with σ `slipStdDevPerMeter` (1 m/m), and widens the outlier gate to match. On a 3 s pin that cuts the worst error from 29 cm to 11 cm. See `Drive/Traction/*`, `Drive.isSlipping()` and `Drive.hadCollision()`.
 
 ### Confidence
 
-`Localization` publishes how much to trust the pose, under `Localization/Confidence/*`:
+Under `Localization/Confidence/*`:
 
-- `PositionStdDevMeters` and `HeadingStdDevDeg`: approximate 1σ. Every keyframe in the window that saw tags is pinned down by as much as those sightings can, and those fixes are fused. Odometry noise since the newest of them (slip included) is added once. This is not the solver's posterior, but it tracks it: about 1 cm while watching tags, about 17 cm after 4 m blind, and meters while slipping.
-- `Value`: the probability that the pose is within `ConfidencePositionToleranceMeters` (5 cm) and `ConfidenceHeadingToleranceDeg` (3°) of the truth.
-- `Confident`: `Value` is at least `ConfidentThreshold` (0.9). Use `localization.isConfident()` to gate anything that needs an accurate pose, such as aligning or auto-scoring. Teleop auto-drive already does.
+- `PositionStdDevMeters`, `HeadingStdDevDeg`: approximate 1σ from the window's tag fixes plus odometry noise since the newest (slip included). About 1 cm watching tags, 17 cm after 4 m blind, meters while slipping.
+- `Value`: probability the pose is within 5 cm and 3° (`Confidence*ToleranceMeters/Deg`).
+- `Confident`: `Value` ≥ 0.9. Gate aligning and auto-scoring on `localization.isConfident()`; teleop auto-drive already does.
 
 ## The map: learned tags that survive reboots
 
-Real fields are never exactly the layout, and tags get bumped. The SLAM keeps a map of where each tag really is:
+Real fields are never exactly the layout, and tags get bumped:
 
-- **It learns.** Each tag's position and yaw are solved alongside the robot's path. Evidence from sightings that slide out of the window is folded into a learned prior that sits on top of the surveyed layout. The layout prior is never removed, so the map as a whole can't drift off the field.
-- **It forgets slowly.** The learned prior has a fading memory of about 200 sightings (`mapMemoryObservations`). It persists while a tag is out of view and keeps adapting while it is in view.
-- **It notices moved tags.** After every solve, each tag's fit and its disagreement with the map are checked. A tag that has clearly moved is forgotten, released from the layout, and re-placed by its own sightings within a second or two. Events are logged to `Localization/QC/MovedTagEvents`.
-- **It survives reboots.** On every disable the map is written to `<robot home>/sota/tagmap.csv` on a background thread, through a temp file and an atomic rename so a brownout can't corrupt it. It is loaded at boot through logged inputs, so log replay starts from the same map. A map saved for a different field layout is ignored.
+- **It learns.** Tag poses are solved with the path. Evidence leaving the window folds into a learned prior on top of the surveyed layout, which is never removed, so the map can't drift off the field.
+- **It forgets slowly**, over about 200 sightings (`mapMemoryObservations`).
+- **It notices moved tags.** A tag that clearly moved is forgotten, released from the layout and re-placed within a second or two (`Localization/QC/MovedTagEvents`).
+- **It survives reboots.** Saved on every disable to `<robot home>/sota/tagmap.csv` (atomic, brownout-safe) and loaded through logged inputs, so replay starts from the same map. A map for another field layout is ignored.
 
-Tested: a tag 15 cm off its layout is learned to under 1 cm; after a reboot the robot starts with it at about 1.5 cm instead of 15 cm; a tag knocked 20 cm mid-match is detected and re-learned to under 1 cm.
-
-At a new venue, reset it from the dashboard (`/Localization/ResetTagMap`). Turn persistence off with `Constants.persistTagMap`, or mapping entirely with `SlamConfig.mapTags`.
+Tested: a tag 15 cm off is learned to under 1 cm, starts at 1.5 cm after a reboot, and a tag knocked 20 cm mid-match is re-learned to under 1 cm. Reset at a new venue with `/Localization/ResetTagMap`; disable with `Constants.persistTagMap` or `SlamConfig.mapTags`.
 
 ## Vision
 
@@ -195,9 +189,25 @@ The SLAM needs only each tag's four corners and the camera's calibration. **A ca
 
 Without corners (no calibration, or Send Corners off), a camera falls back to tag centers. That still works, but is less accurate (see the benchmark).
 
+### Cameras: detection over frame rate
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmarks/detection-dark.svg">
+  <img src="docs/benchmarks/detection-light.svg" alt="Far tags kept: 8.3 cm; dropped: 13.2 cm; PhotonVision 127 cm" width="100%">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmarks/frame-rate-dark.svg">
+  <img src="docs/benchmarks/frame-rate-light.svg" alt="30 fps and 100 fps both 0.8 cm with a long enough window" width="100%">
+</picture>
+
+- **Spend on detection, not frames.** 200 Hz odometry carries the pose between frames, so 30–50 fps is plenty. What moves accuracy is which tags are seen and how cleanly: resolution, calibration, short exposure (≤ 0.5 ms keeps motion blur under a pixel) and a detector that finds small tags.
+- **Detectors differ a lot on small tags.** In [one forum test](https://www.chiefdelphi.com/t/introducing-napa-a-faster-apriltag-detector/525801) on a Raspberry Pi 5 module, NAPA found every tag from 22 px; AprilTag at WPILib defaults only from 80 px. Measure your own camera at known distances.
+- **Size the window in time.** It spans about `maxKeyframes` ÷ keyframes per second, and every camera frame is a keyframe (two cameras share one only within 8 ms). Two unsynchronized 50 fps cameras make up to 100 keyframes/s, so the default 40 is 0.4 s. Raise `maxKeyframes` with the frame rate: 60 costs about 1.2 ms, 100 about 4.7 ms.
+
 ### Configuration alerts
 
-A misconfigured camera degrades the SLAM without breaking it, so `Vision` raises a WPILib alert per camera (group `Vision`, key `<camera><Problem>`) and prints a driver station warning when one appears. Each must hold for 50 loops (about 1 s) first, and none is raised while the camera is disconnected. The backends report what they detect as logged inputs, so replay raises the same alerts on the same loops.
+A misconfigured camera degrades the SLAM quietly, so `Vision` raises a WPILib alert (group `Vision`, key `<camera><Problem>`) and a driver station warning once a problem holds for about 1 s on a connected camera. Replay raises the same alerts.
 
 | Alert | Level | Raised when | Backends |
 |---|---|---|---|
@@ -311,7 +321,8 @@ Values go through AdvantageKit's `LoggedNetworkNumber`, so they are logged as in
 
 | Test | What it covers |
 |---|---|
-| `SlamEstimatorTest` | SLAM accuracy, corners against centers, unknown start, learning a misplaced tag, the map surviving a reboot through the real file IO, re-learning a tag nudged mid-match, a 3 s pin with and without the slip reported, and the confidence estimate while seeing tags, driving blind and slipping |
+| `SlamEstimatorTest` | SLAM accuracy, corners against centers, unknown start, learning a misplaced tag, the map surviving a reboot through the real file IO, re-learning a tag nudged mid-match, a 3 s pin with and without the slip reported, the confidence estimate while seeing tags, driving blind and slipping, and both solvers converging to the same answer |
+| `GaussNewtonSolverTest` | The hand-derived Jacobians against finite differences, for every factor type |
 | `SimPipelineTest` | The full sim sensor stack into `Localization` |
 | `OpModeTest` | Boots the real `Robot`, selects OpModes and presses buttons through `DriverStationSim`. Covers field-relative teleop, no duplicate bindings across disable and enable, the superstructure state machine on the Talon-sim intake, all autos finishing on target, the `Path Two Piece` auto pinned mid-path with its wheels spinning (slip detected, cleared on release, pose recovered, both pieces scored), teleop auto-drive on the Y button, and the teleop acceleration limit. |
 | `CameraBackendTest` | Limelight (with real lens distortion and corners in a scrambled order), PhotonVision (its own `VisionSystemSim`, including a tag 35° off-axis) and the template's sim camera, all checked against known geometry: corner order and position, bearing sign, range, and timestamp timebase. A field-wide sweep also checks that the sim camera never reports a tag seen from behind. |

@@ -40,10 +40,24 @@ final class BenchmarkChart {
 
   private static final String FONT = "system-ui, -apple-system, Segoe UI, sans-serif";
 
+  /** A chart in cm with no axis cap. */
+  static String render(
+      String title,
+      String subtitle,
+      List<String> scenarios,
+      List<String> series,
+      double[][] values,
+      boolean dark) {
+    return render(title, subtitle, scenarios, series, values, "cm", Double.NaN, dark);
+  }
+
   /**
    * @param scenarios Row labels.
-   * @param series Series names (legend order, top to bottom within each row).
-   * @param values values[scenario][series], in cm.
+   * @param series Series names (legend order, top to bottom within each row). At most three.
+   * @param values values[scenario][series].
+   * @param unit Unit for labels and the last tick, e.g. "cm" or "ms".
+   * @param cap Axis maximum; longer bars are drawn to the edge, labelled with their true value. NaN
+   *     fits the axis to the data.
    */
   static String render(
       String title,
@@ -51,6 +65,8 @@ final class BenchmarkChart {
       List<String> scenarios,
       List<String> series,
       double[][] values,
+      String unit,
+      double cap,
       boolean dark) {
     Theme t = dark ? DARK : LIGHT;
     int width = 860;
@@ -64,7 +80,9 @@ final class BenchmarkChart {
 
     double max = 0;
     for (double[] row : values) for (double v : row) max = Math.max(max, v);
-    double axisMax = Math.ceil(max / 10.0) * 10.0;
+    if (Double.isFinite(cap)) max = Math.min(max, cap);
+    double step = niceStep(max);
+    double axisMax = Math.max(step, Math.ceil(max / step - 1e-9) * step);
     int groupHeight = series.size() * barHeight + (series.size() - 1) * gap;
     int plotBottom = top + scenarios.size() * (groupHeight + groupGap) - groupGap;
     int height = plotBottom + 44;
@@ -101,7 +119,7 @@ final class BenchmarkChart {
     }
 
     // Gridlines and ticks
-    for (double tick = 0; tick <= axisMax + 1e-9; tick += 10) {
+    for (double tick = 0; tick <= axisMax + 1e-9; tick += step) {
       double x = plotLeft + (plotRight - plotLeft) * tick / axisMax;
       s.append(
           String.format(
@@ -116,7 +134,7 @@ final class BenchmarkChart {
           text(
               (int) Math.round(x),
               plotBottom + 22,
-              (int) tick + (tick == axisMax ? " cm" : ""),
+              tick(tick) + (Math.abs(tick - axisMax) < 1e-9 ? " " + unit : ""),
               t.muted(),
               12,
               "400",
@@ -137,14 +155,14 @@ final class BenchmarkChart {
               "start"));
       for (int i = 0; i < series.size(); i++) {
         double v = values[r][i];
-        double w = Math.max(2, (plotRight - plotLeft) * v / axisMax);
+        double w = Math.max(2, (plotRight - plotLeft) * Math.min(v, axisMax) / axisMax);
         int y = groupTop + i * (barHeight + gap);
         s.append(bar(plotLeft, y, w, barHeight, t.series()[i]));
         s.append(
             text(
                 (int) Math.round(plotLeft + w + 6),
                 y + barHeight / 2 + 4,
-                String.format(Locale.ROOT, "%.1f cm", v),
+                number(v) + " " + unit + (v > axisMax ? " →" : ""),
                 t.secondary(),
                 12,
                 "400",
@@ -153,6 +171,32 @@ final class BenchmarkChart {
     }
     s.append("</svg>\n");
     return s.toString();
+  }
+
+  /** A tick spacing of 1, 2 or 5 times a power of ten giving at most about six ticks. */
+  private static double niceStep(double max) {
+    if (!(max > 0)) return 1.0;
+    double raw = max / 6.0;
+    double magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (double m : new double[] {1, 2, 5, 10}) {
+      if (m * magnitude >= raw) return m * magnitude;
+    }
+    return 10 * magnitude;
+  }
+
+  /** A value with as many decimals as its size needs: 127, 8.3, 4.0, 0.52. */
+  private static String number(double v) {
+    if (v >= 100) return String.format(Locale.ROOT, "%.0f", v);
+    if (v >= 1) return String.format(Locale.ROOT, "%.1f", v);
+    // Two decimals only when the second carries information: 0.52, but 0.8 rather than 0.80
+    String out = String.format(Locale.ROOT, "%.2f", v);
+    return out.endsWith("0") ? out.substring(0, out.length() - 1) : out;
+  }
+
+  /** An axis tick without trailing zeros: 0, 0.2, 5, 40. */
+  private static String tick(double v) {
+    String out = String.format(Locale.ROOT, "%.2f", v);
+    return out.replaceAll("0+$", "").replaceAll("\\.$", "");
   }
 
   /** A bar square at the baseline with a 4px rounded data end. */
