@@ -41,6 +41,7 @@ public final class PhotonVisionBaseline {
   private final Field field;
   private final Map<Integer, Pose3d> layout;
   private final Matrix<N3, N3> cameraMatrix;
+  private final double focalPx;
   private final Matrix<N8, N1> distortion = new Matrix<>(Nat.N8(), Nat.N1());
   private final TwoDeadWheelPoseEstimator estimator;
   private double xWheel = 0.0;
@@ -54,14 +55,16 @@ public final class PhotonVisionBaseline {
       Map<Integer, Pose3d> layout,
       Pose2d start,
       Pose2d odometry,
-      double gyroYaw) {
+      double gyroYaw,
+      double focalPx) {
     this.cameras = cameras;
+    this.focalPx = focalPx;
     this.layout = layout;
     List<FieldTag> tags = new ArrayList<>();
     layout.forEach((id, pose) -> tags.add(new FieldTag(id, pose)));
     field = new Field("benchmark", "", "", null, 16.54, 8.07, "FRC", tags);
-    double f = SyntheticMatch.FOCAL_PX;
-    cameraMatrix = MatBuilder.fill(Nat.N3(), Nat.N3(), f, 0, 640, 0, f, 400, 0, 0, 1);
+    // A 1280x800 image; the principal point is its center
+    cameraMatrix = MatBuilder.fill(Nat.N3(), Nat.N3(), focalPx, 0, 640, 0, focalPx, 400, 0, 0, 1);
     estimator =
         new TwoDeadWheelPoseEstimator(
             0.0,
@@ -89,10 +92,7 @@ public final class PhotonVisionBaseline {
       double[] c = f.corners();
       List<TargetCorner> corners = new ArrayList<>();
       for (int k = 0; k < 4; k++) {
-        corners.add(
-            new TargetCorner(
-                640 + c[2 * k] * SyntheticMatch.FOCAL_PX,
-                400 - c[2 * k + 1] * SyntheticMatch.FOCAL_PX));
+        corners.add(new TargetCorner(640 + c[2 * k] * focalPx, 400 - c[2 * k + 1] * focalPx));
       }
       targets.add(
           new PhotonTrackedTarget(

@@ -11,8 +11,12 @@ import org.wpilib.math.util.Units;
 public final class SlamConfig implements Cloneable {
   // ---- Window ----
 
-  /** Maximum number of keyframes kept in the sliding window. Solve cost grows linearly. */
-  public int maxKeyframes = 25;
+  /**
+   * Maximum number of keyframes kept in the sliding window. More history helps most when tags are
+   * sparse (one camera, only far tags); the Gauss-Newton solve costs about 1 ms at 40 and 2 ms at
+   * 60 on a laptop. The autodiff solver is ~50x slower and was tuned at 25.
+   */
+  public int maxKeyframes = 40;
 
   /** Observations whose timestamps fall within this many seconds share a keyframe. */
   public double keyframeMergeWindowSecs = 0.008;
@@ -31,20 +35,32 @@ public final class SlamConfig implements Cloneable {
 
   // ---- Solver ----
 
+  /** How the window is solved. Both minimize the same cost. */
+  public enum Solver {
+    /** WPILib's autodiff optimizer (Sleipnir): Newton's method on an expression graph. */
+    AUTODIFF,
+    /** Hand-derived Jacobians and a damped Gauss-Newton step; no expression graph to build. */
+    GAUSS_NEWTON
+  }
+
+  public Solver solver = Solver.GAUSS_NEWTON;
+
   /**
-   * Maximum interior-point iterations per solve. Each solve is warm-started from the last, so a few
-   * iterations per camera frame track the optimum (incremental Gauss-Newton). The solver is
-   * deliberately iteration-bounded rather than time-bounded so AdvantageKit replay produces
-   * bit-identical results.
+   * Maximum iterations per solve. Each solve is warm-started from the last, so a few iterations per
+   * camera frame track the optimum (incremental Gauss-Newton). The solver is deliberately
+   * iteration-bounded rather than time-bounded so AdvantageKit replay produces bit-identical
+   * results.
    */
   public int maxIterations = 2;
 
   /**
    * Run each solve on a background thread and apply it this many {@link SlamEstimator#update()}
    * calls later. The fixed delay keeps replay deterministic; the robot loop only waits if a solve
-   * takes longer than this many loops. 0 solves synchronously inside update().
+   * takes longer than this many loops. 0 solves synchronously inside update(), which is the most
+   * accurate (the estimate is never a few loops stale) and fine for the Gauss-Newton solver; the
+   * autodiff solver is slow enough to need 3.
    */
-  public int solveLatencyLoops = 3;
+  public int solveLatencyLoops = 0;
 
   /** Solver convergence tolerance. */
   public double tolerance = 1e-7;
@@ -123,6 +139,31 @@ public final class SlamConfig implements Cloneable {
 
   /** Observations further than this many σ from the current estimate are rejected outright. */
   public double outlierGateSigma = 8.0;
+
+  /**
+   * Beyond this distance a tag's measured range (from PnP or its apparent size, whose error grows
+   * with distance²) is ignored and only its center bearing is used. Tags are only dropped outright
+   * past the camera's {@link CameraModel#maxRangeMeters()}.
+   */
+  public double rangeTrustMeters = 7.0;
+
+  /**
+   * Drop tags beyond {@link #rangeTrustMeters} entirely instead of keeping their bearing. For
+   * comparison only; it throws away the only fix available when every visible tag is far.
+   */
+  public boolean dropBeyondRangeTrust = false;
+
+  /**
+   * Keep using corners beyond {@link #rangeTrustMeters}. Off by default: a far tag's corners add
+   * almost nothing over its center bearing but cost four reprojection terms each in the solve.
+   */
+  public boolean cornersBeyondRangeTrust = false;
+
+  /**
+   * Bearing σ grows by this factor per meter beyond {@link #rangeTrustMeters}, hedging against the
+   * jitter and misreads of tags only a few pixels across. 0 keeps it constant.
+   */
+  public double farBearingInflationPerMeter = 0.15;
 
   // ---- Map (tag landmarks) ----
 

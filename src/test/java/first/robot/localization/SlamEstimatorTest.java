@@ -283,6 +283,51 @@ class SlamEstimatorTest {
         corners);
   }
 
+  /**
+   * Solved to convergence, both solvers find the minimum of the same cost, so they must agree. A
+   * mistranscribed factor in the hand-written solver would still pass its gradient check; this
+   * doesn't.
+   */
+  @Test
+  void solversAgreeAtConvergence() {
+    solversAgree(true);
+  }
+
+  @Test
+  void solversAgreeAtConvergenceOnCenters() {
+    solversAgree(false);
+  }
+
+  private void solversAgree(boolean useCorners) {
+    RunResult[] results = new RunResult[2];
+    SlamConfig.Solver[] solvers = {SlamConfig.Solver.AUTODIFF, SlamConfig.Solver.GAUSS_NEWTON};
+    for (int k = 0; k < 2; k++) {
+      var config = new SlamConfig();
+      config.useCorners = useCorners;
+      config.solver = solvers[k];
+      config.maxIterations = 30;
+      config.solveLatencyLoops = 0;
+      results[k] = run(true, 10.0, layout(), config);
+    }
+    Pose2d a = results[0].slam().getEstimatedPose();
+    Pose2d b = results[1].slam().getEstimatedPose();
+    System.out.printf(
+        "solvers at convergence (corners " + useCorners + "): pose differs by %.2e m / %.2e rad%n",
+        a.getTranslation().getDistance(b.getTranslation()),
+        Math.abs(a.getRotation().minus(b.getRotation()).getRadians()));
+    assertEquals(0.0, a.getTranslation().getDistance(b.getTranslation()), 1e-3);
+    assertEquals(0.0, a.getRotation().minus(b.getRotation()).getRadians(), 1e-4);
+    var tagsA = results[0].slam().getTagEstimates();
+    var tagsB = results[1].slam().getTagEstimates();
+    for (var id : tagsA.keySet()) {
+      assertEquals(
+          0.0,
+          tagsA.get(id).getTranslation().getDistance(tagsB.get(id).getTranslation()),
+          1e-3,
+          "tag " + id);
+    }
+  }
+
   @Test
   void tracksFromKnownStart() {
     RunResult result = run(true, 20.0, layout(), new SlamConfig());

@@ -77,6 +77,7 @@ public final class TractionMonitor {
   private Translation2d lastWheelVelocity = Translation2d.ZERO; // Robot frame
   private double disagreementHold = 0.0;
   private double slipHold = 0.0;
+  private double wheelSlipHold = 0.0;
   private double collisionHold = 0.0;
 
   public TractionMonitor(SwerveDriveKinematics kinematics) {
@@ -129,7 +130,17 @@ public final class TractionMonitor {
           wheelAccel.minus(accel).getNorm() > ACCEL_DISAGREEMENT_THRESHOLD.get() * G;
       disagreementHold =
           disagreeing ? DISAGREEMENT_HOLD_SECS.get() : Math.max(0.0, disagreementHold - dt);
-      double leak = disagreementHold > 0.0 ? IMU_LEAK_DISAGREEING.get() : IMU_LEAK_AGREEING.get();
+      // Don't leak toward the wheels while they are visibly slipping either. Pinned with the wheels
+      // spinning, wheels and IMU both read ~zero acceleration and so "agree"; leaking then would
+      // teach the integrator the spin speed, and it would take a second to unwind after release.
+      // Only the wheel-only signals count here: the IMU signal would hold itself on forever.
+      boolean wheelSlipNow =
+          scrub > SCRUB_THRESHOLD.get() || yawRateError > YAW_RATE_THRESHOLD.get();
+      wheelSlipHold = wheelSlipNow ? SLIP_HOLD_SECS.get() : Math.max(0.0, wheelSlipHold - dt);
+      double leak =
+          disagreementHold > 0.0 || wheelSlipHold > 0.0
+              ? IMU_LEAK_DISAGREEING.get()
+              : IMU_LEAK_AGREEING.get();
 
       // Integrate the IMU in the robot frame (rotating with the robot), leaking toward the wheels
       imuVelocity =

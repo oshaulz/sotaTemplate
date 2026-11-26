@@ -11,7 +11,9 @@ import org.wpilib.math.geometry.Transform3d;
  * @param rangeStdDevBaseMeters Constant range noise.
  * @param rangeStdDevPerMeterSq Range noise growth per meter². Tag-size ranging degrades
  *     quadratically with distance.
- * @param maxRangeMeters Observations further than this are ignored.
+ * @param maxRangeMeters Observations further than this are ignored entirely: about where a tag
+ *     becomes too few pixels to decode reliably. Range alone stops being trusted much sooner
+ *     ({@link SlamConfig#rangeTrustMeters}).
  * @param cornerStdDev Noise on one tag corner, in normalized image units (pixels divided by focal
  *     length). About 0.001 for a calibrated global-shutter camera (one pixel at f = 1000 px).
  */

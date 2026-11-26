@@ -77,7 +77,7 @@ public class SlamEstimator {
       double buildMs,
       double solveMs) {}
 
-  private static final class Keyframe {
+  static final class Keyframe {
     final double timestamp;
     final Pose2d odometry;
     final double gyroYaw;
@@ -124,7 +124,7 @@ public class SlamEstimator {
     }
   }
 
-  private static final class Landmark {
+  static final class Landmark {
     final double layoutX;
     final double layoutY;
     final double layoutYaw;
@@ -403,6 +403,7 @@ public class SlamEstimator {
       if (!landmarks.containsKey(obs.tagId())) continue;
       if (!Double.isFinite(obs.bearingRad())) continue;
       if (obs.rangeMeters() > cameras[obs.cameraIndex()].maxRangeMeters()) continue;
+      if (config.dropBeyondRangeTrust && obs.rangeMeters() > config.rangeTrustMeters) continue;
 
       Keyframe kf = findOrInsertKeyframe(obs.timestampSecs());
       if (kf == null) continue;
@@ -751,7 +752,7 @@ public class SlamEstimator {
     CameraModel cam = cameras[obs.cameraIndex()];
     double c = Math.cos(kf.theta);
     double s = Math.sin(kf.theta);
-    if (config.useCorners && obs.hasCorners()) {
+    if (useCorners(config, obs)) {
       Rotation3d inverse = cam.robotToCamera().getRotation().inverse();
       double sigma = cam.cornerStdDev() * obs.stdDevScale();
       double cy = Math.cos(lm.yaw);
@@ -782,7 +783,7 @@ public class SlamEstimator {
     double px = Math.cos(camYaw) * rx + Math.sin(camYaw) * ry;
     double py = -Math.sin(camYaw) * rx + Math.cos(camYaw) * ry;
     double bearingError = MathUtil.angleModulus(obs.bearingRad() - Math.atan2(py, px));
-    return Math.abs(bearingError) / (cam.bearingStdDevRad() * obs.stdDevScale());
+    return Math.abs(bearingError) / bearingStdDev(config, cam, obs);
   }
 
   /** Waits for any in-flight solve and applies it. For tests and shutdown. */
@@ -850,6 +851,58 @@ public class SlamEstimator {
 
       // Wall-clock time is measured for diagnostics only; it never influences the solution
       long buildStart = System.nanoTime();
+      if (config.solver == SlamConfig.Solver.GAUSS_NEWTON) {
+        var gn =
+            new GaussNewtonSolver(
+                keyframes,
+                active,
+                config,
+                cameras,
+                anchorX,
+                anchorY,
+                anchorTheta,
+                anchorVarTrans,
+                anchorVarRot,
+                gyroOffset,
+                odometryScale);
+        long solveStart = System.nanoTime();
+        GaussNewtonSolver.Result result = gn.solve();
+        long solveEnd = System.nanoTime();
+        if (Double.isFinite(result.cost())) {
+          double[] x = gn.state;
+          for (int i = 0; i < n; i++) {
+            Keyframe kf = keyframes.get(i);
+            kf.x = x[3 * i];
+            kf.y = x[3 * i + 1];
+            kf.theta = x[3 * i + 2];
+          }
+          gyroOffset = x[3 * n];
+          odometryScale =
+              Math.clamp(x[3 * n + 1], config.minOdometryScale(), config.maxOdometryScale());
+          if (config.mapTags) {
+            int t = 3 * n + 2;
+            for (var lm : active.values()) {
+              lm.x = x[t];
+              lm.y = x[t + 1];
+              lm.yaw = x[t + 2];
+              t += 3;
+            }
+          }
+          localized = true;
+        }
+        lastSolve =
+            new SolveResult(
+                result.status(),
+                result.iterations(),
+                n,
+                active.size(),
+                observationCount,
+                rejectedObservations,
+                result.cost(),
+                (solveStart - buildStart) / 1e6,
+                (solveEnd - solveStart) / 1e6);
+        return;
+      }
       try (Problem problem = new Problem()) {
         Variable[] xs = new Variable[n];
         Variable[] ys = new Variable[n];
@@ -954,7 +1007,7 @@ public class SlamEstimator {
             CameraModel cam = cameras[obs.cameraIndex()];
             Variable[] lm = lmVars.get(obs.tagId());
 
-            if (config.useCorners && obs.hasCorners()) {
+            if (useCorners(config, obs)) {
               addCornerFactor(
                   terms, xs[i], ys[i], c, s, lm, landmarks.get(obs.tagId()), cam, obs, delta2);
               continue;
@@ -984,10 +1037,10 @@ public class SlamEstimator {
             double my = Math.sin(obs.bearingRad());
             Variable predictedRange = Variable.hypot(px, py);
             Variable bearingError = py.times(mx).minus(px.times(my)).div(predictedRange);
-            double bearingStd = cam.bearingStdDevRad() * obs.stdDevScale();
+            double bearingStd = bearingStdDev(config, cam, obs);
             terms.add(robust(sq(bearingError).div(sq(bearingStd)), delta2));
 
-            if (Double.isFinite(obs.rangeMeters())) {
+            if (rangeUsable(config, obs)) {
               Variable rangeError = predictedRange.minus(obs.rangeMeters());
               terms.add(robust(sq(rangeError).div(rangeVariance(cam, obs)), delta2));
             }
@@ -1088,7 +1141,7 @@ public class SlamEstimator {
     double sumY = 0.0;
     int count = 0;
     for (var obs : seed.observations) {
-      if (!Double.isFinite(obs.rangeMeters())) continue;
+      if (!rangeUsable(config, obs)) continue;
       Landmark lm = landmarks.get(obs.tagId());
       CameraModel cam = cameras[obs.cameraIndex()];
       double camYaw = cam.robotToCamera().getRotation().getZ();
@@ -1383,14 +1436,12 @@ public class SlamEstimator {
       poseStd += config.movedTagSearchRadiusMeters / config.outlierGateSigma;
     }
     double bearingStd =
-        Math.hypot(
-            cam.bearingStdDevRad() * obs.stdDevScale(),
-            poseStd / Math.max(0.5, Math.hypot(px, py)));
+        Math.hypot(bearingStdDev(config, cam, obs), poseStd / Math.max(0.5, Math.hypot(px, py)));
     double bearingError = MathUtil.angleModulus(obs.bearingRad() - Math.atan2(py, px));
     if (Math.abs(bearingError) / bearingStd > config.outlierGateSigma) {
       return true;
     }
-    if (Double.isFinite(obs.rangeMeters())) {
+    if (rangeUsable(config, obs)) {
       double rangeStd = Math.hypot(Math.sqrt(rangeVariance(cam, obs)), poseStd);
       double rangeError = obs.rangeMeters() - Math.hypot(px, py);
       return Math.abs(rangeError) / rangeStd > config.outlierGateSigma;
@@ -1462,7 +1513,7 @@ public class SlamEstimator {
     double range = Double.isFinite(obs.rangeMeters()) ? obs.rangeMeters() : 3.0;
     double posVar;
     double yawInfo = 0.0;
-    if (config.useCorners && obs.hasCorners()) {
+    if (useCorners(config, obs)) {
       double sigma = cam.cornerStdDev() * obs.stdDevScale();
       // Four corners: lateral from their mean, radial from the tag's apparent size
       double lateralVar = sq(range * sigma) / 4.0;
@@ -1473,8 +1524,8 @@ public class SlamEstimator {
           config.marginalizationInfoScale
               / (sq(range * range * sigma / sq(config.tagSizeMeters)) / 2.0 + 1e-6);
     } else {
-      double lateralVar = sq(range * cam.bearingStdDevRad() * obs.stdDevScale());
-      double radialVar = Double.isFinite(obs.rangeMeters()) ? rangeVariance(cam, obs) : 1e6;
+      double lateralVar = sq(range * bearingStdDev(config, cam, obs));
+      double radialVar = rangeUsable(config, obs) ? rangeVariance(cam, obs) : 1e6;
       posVar = Math.max(lateralVar, Math.min(radialVar, 1e6));
     }
     // Isotropic approximation: about as well as the weaker axis, plus the robot's uncertainty
@@ -1493,7 +1544,7 @@ public class SlamEstimator {
   }
 
   /** How much of a stretch of wheel travel to believe, given how much of it was slipping. */
-  private static double slipKeep(SlamConfig config, double travel, double slipTravel) {
+  static double slipKeep(SlamConfig config, double travel, double slipTravel) {
     if (travel <= 1e-9) return 1.0;
     return 1.0 - (1.0 - config.slipOdometryTrust) * Math.min(1.0, slipTravel / travel);
   }
@@ -1515,7 +1566,7 @@ public class SlamEstimator {
    * Variance of a wheel-odometry translation: the normal noise model, plus a much larger term for
    * whatever part of it was driven while slipping.
    */
-  private static double odometryVariance(SlamConfig config, double dist, double slipDist) {
+  static double odometryVariance(SlamConfig config, double dist, double slipDist) {
     return sq(config.odometryStdDevBaseMeters + config.odometryStdDevPerMeter * dist)
         + sq(config.slipStdDevPerMeter * slipDist);
   }
@@ -1612,7 +1663,33 @@ public class SlamEstimator {
     return null;
   }
 
-  private static double rangeVariance(CameraModel cam, TagObservation obs) {
+  /**
+   * Whether to use an observation's corners. Beyond {@link SlamConfig#rangeTrustMeters} only its
+   * center bearing is used unless {@link SlamConfig#cornersBeyondRangeTrust} is set.
+   */
+  static boolean useCorners(SlamConfig config, TagObservation obs) {
+    return config.useCorners
+        && obs.hasCorners()
+        && (config.cornersBeyondRangeTrust || !(obs.rangeMeters() > config.rangeTrustMeters));
+  }
+
+  /** Whether an observation's range is a measurement to use, not just a hint of how far it is. */
+  static boolean rangeUsable(SlamConfig config, TagObservation obs) {
+    return Double.isFinite(obs.rangeMeters()) && obs.rangeMeters() <= config.rangeTrustMeters;
+  }
+
+  /** Bearing σ, inflated for tags beyond {@link SlamConfig#rangeTrustMeters}. */
+  static double bearingStdDev(SlamConfig config, CameraModel cam, TagObservation obs) {
+    double beyond =
+        Double.isFinite(obs.rangeMeters())
+            ? Math.max(0.0, obs.rangeMeters() - config.rangeTrustMeters)
+            : 0.0;
+    return cam.bearingStdDevRad()
+        * obs.stdDevScale()
+        * (1.0 + config.farBearingInflationPerMeter * beyond);
+  }
+
+  static double rangeVariance(CameraModel cam, TagObservation obs) {
     double r = obs.rangeMeters();
     return sq(
         (cam.rangeStdDevBaseMeters() + cam.rangeStdDevPerMeterSq() * r * r) * obs.stdDevScale());
@@ -1622,7 +1699,7 @@ public class SlamEstimator {
     return reference + MathUtil.angleModulus(angle - reference);
   }
 
-  private static double sq(double x) {
+  static double sq(double x) {
     return x * x;
   }
 

@@ -128,6 +128,8 @@ tasks.register('benchmark', Test) {
     useJUnitPlatform { includeTags 'benchmark' }
     testLogging { showStandardStreams = true }
     outputs.upToDateWhen { false }
+    // ./gradlew benchmark -Pseeds=1,2,3 overrides the default seeds
+    if (project.hasProperty('seeds')) systemProperty 'benchmark.seeds', project.property('seeds')
 }
 wpi.java.configureTestTasks(tasks.named('benchmark').get())
 

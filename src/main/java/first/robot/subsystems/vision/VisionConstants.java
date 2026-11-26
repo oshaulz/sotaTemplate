@@ -43,7 +43,7 @@ public final class VisionConstants {
         Units.degreesToRadians(0.4),
         0.02,
         0.012,
-        7.0,
+        14.0,
         0.001),
     new CameraModel(
         "limelight-back",
@@ -52,7 +52,7 @@ public final class VisionConstants {
         Units.degreesToRadians(0.4),
         0.02,
         0.012,
-        7.0,
+        14.0,
         0.001),
   };
 
