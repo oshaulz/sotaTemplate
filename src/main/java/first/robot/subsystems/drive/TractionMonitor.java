@@ -19,15 +19,17 @@ import org.wpilib.math.kinematics.SwerveModuleVelocity;
  *       much some wheel is sliding sideways or spinning.
  *   <li><b>Yaw rate:</b> the wheels say the robot is turning at a different rate than the gyro.
  *   <li><b>Accelerometer:</b> the wheels' velocity disagrees with the IMU's. The IMU's acceleration
- *       is integrated into a velocity that follows the wheels' while the two agree on acceleration,
- *       and is left alone while they don't (so lying wheels can't drag it along). Hit by a defender
- *       with the wheels still spinning, the IMU feels the stop and the wheels don't: no other check
- *       can see that. The same happens in reverse when the robot is released.
+ *       is integrated into a velocity that slowly follows the wheels' (to cancel accelerometer
+ *       bias), except while an event is latched. Hit by a defender with the wheels still spinning,
+ *       the IMU feels the stop and the wheels don't: no other check can see that.
  * </ul>
  *
  * <p>An IMU only feels changes: a robot pinned with its wheels spinning at a steady speed feels
- * exactly like one cruising at that speed. So the accelerometer check flags the transitions and
- * then lets go, and vision (in the SLAM) sorts out the steady state.
+ * exactly like one cruising at that speed. So the event is latched when it starts (accelerations
+ * disagree, or scrub or yaw rate fire) and the IMU velocity stops following the wheels until the
+ * two velocities agree again, the wheels stop, or {@code Traction/MaxLatchSecs} passes. Without the
+ * latch the IMU would learn the lying wheels' speed during a pin and then flag the honest wheels
+ * after release. A pin longer than the cap is left to vision (in the SLAM).
  *
  * <p>A collision is a horizontal acceleration spike beyond anything the drivetrain can produce. It
  * is reported on its own, not as slip: the spike when a pinned robot is released is a collision by
@@ -62,6 +64,16 @@ public final class TractionMonitor {
       new TunableNumber("Traction/CollisionHoldSecs", 0.25);
   private static final TunableNumber DISAGREEMENT_HOLD_SECS =
       new TunableNumber("Traction/AccelDisagreementHoldSecs", 0.25);
+  // An event unlatches when IMU and wheel velocities agree within this (below the slip threshold,
+  // and well above the ~0.07 m/s that 0.02 g of accelerometer bias settles at)...
+  private static final TunableNumber UNLATCH_ERROR =
+      new TunableNumber("Traction/ImuUnlatchErrorMetersPerSec", 0.2);
+  // ...or the wheels stop (stopped wheels are honest, so the IMU velocity resyncs to them)...
+  private static final TunableNumber STOPPED_SPEED =
+      new TunableNumber("Traction/StoppedWheelSpeedMetersPerSec", 0.1);
+  // ...or this long after the last trigger, so a wrong IMU can never latch forever
+  private static final TunableNumber MAX_LATCH_SECS =
+      new TunableNumber("Traction/MaxLatchSecs", 5.0);
 
   /** One loop's verdict, with the signals behind it for logging. */
   public record Result(
@@ -70,14 +82,16 @@ public final class TractionMonitor {
       double scrubMetersPerSec,
       double yawRateErrorRadPerSec,
       double imuVelocityErrorMetersPerSec,
-      double accelerationG) {}
+      double accelerationG,
+      boolean eventLatched) {}
 
   private final SwerveDriveKinematics kinematics;
   private Translation2d imuVelocity = Translation2d.ZERO; // Robot frame
   private Translation2d lastWheelVelocity = Translation2d.ZERO; // Robot frame
-  private double disagreementHold = 0.0;
+  private boolean latched = false;
+  private double latchMinHold = 0.0; // A latch lasts at least DISAGREEMENT_HOLD_SECS
+  private double sinceTrigger = 0.0;
   private double slipHold = 0.0;
-  private double wheelSlipHold = 0.0;
   private double collisionHold = 0.0;
 
   public TractionMonitor(SwerveDriveKinematics kinematics) {
@@ -128,31 +142,41 @@ public final class TractionMonitor {
       lastWheelVelocity = wheelVelocity;
       boolean disagreeing =
           wheelAccel.minus(accel).getNorm() > ACCEL_DISAGREEMENT_THRESHOLD.get() * G;
-      disagreementHold =
-          disagreeing ? DISAGREEMENT_HOLD_SECS.get() : Math.max(0.0, disagreementHold - dt);
-      // Don't leak toward the wheels while they are visibly slipping either. Pinned with the wheels
-      // spinning, wheels and IMU both read ~zero acceleration and so "agree"; leaking then would
-      // teach the integrator the spin speed, and it would take a second to unwind after release.
-      // Only the wheel-only signals count here: the IMU signal would hold itself on forever.
-      boolean wheelSlipNow =
+      boolean wheelsSlipping =
           scrub > SCRUB_THRESHOLD.get() || yawRateError > YAW_RATE_THRESHOLD.get();
-      wheelSlipHold = wheelSlipNow ? SLIP_HOLD_SECS.get() : Math.max(0.0, wheelSlipHold - dt);
-      double leak =
-          disagreementHold > 0.0 || wheelSlipHold > 0.0
-              ? IMU_LEAK_DISAGREEING.get()
-              : IMU_LEAK_AGREEING.get();
 
-      // Integrate the IMU in the robot frame (rotating with the robot), leaking toward the wheels
-      imuVelocity =
-          imuVelocity
-              .rotateBy(new Rotation2d(-gyroYawRateRadPerSec * dt))
-              .plus(accel.times(dt))
-              .plus(wheelVelocity.minus(imuVelocity).times(Math.min(1.0, leak * dt)));
+      // Integrate the IMU in the robot frame (rotating with the robot)
+      Translation2d predicted =
+          imuVelocity.rotateBy(new Rotation2d(-gyroYawRateRadPerSec * dt)).plus(accel.times(dt));
+      double predictedError = wheelVelocity.minus(predicted).getNorm();
+
+      // Latch an event when it starts; release it only once it is over
+      if (disagreeing || wheelsSlipping) {
+        latched = true;
+        latchMinHold = DISAGREEMENT_HOLD_SECS.get();
+        sinceTrigger = 0.0;
+      } else {
+        latchMinHold = Math.max(0.0, latchMinHold - dt);
+        sinceTrigger += dt;
+        if (latched && latchMinHold <= 0.0) {
+          boolean stopped = wheelVelocity.getNorm() < STOPPED_SPEED.get();
+          boolean expired = sinceTrigger > MAX_LATCH_SECS.get();
+          if (predictedError < UNLATCH_ERROR.get() || stopped || expired) {
+            latched = false;
+            if (stopped || expired) predicted = wheelVelocity;
+          }
+        }
+      }
+
+      // Follow the wheels, to cancel accelerometer bias, only while no event is latched
+      double leak = latched ? IMU_LEAK_DISAGREEING.get() : IMU_LEAK_AGREEING.get();
+      imuVelocity = predicted.plus(wheelVelocity.minus(predicted).times(Math.min(1.0, leak * dt)));
       imuError = wheelVelocity.minus(imuVelocity).getNorm();
       accelerationG = Math.hypot(accelXG, accelYG);
     } else {
       imuVelocity = new Translation2d(wheels.vx, wheels.vy);
       lastWheelVelocity = imuVelocity;
+      latched = false;
     }
 
     boolean slipNow =
@@ -164,6 +188,6 @@ public final class TractionMonitor {
     slipHold = slipNow ? SLIP_HOLD_SECS.get() : Math.max(0.0, slipHold - dt);
     collisionHold = collisionNow ? COLLISION_HOLD_SECS.get() : Math.max(0.0, collisionHold - dt);
     return new Result(
-        slipHold > 0.0, collisionHold > 0.0, scrub, yawRateError, imuError, accelerationG);
+        slipHold > 0.0, collisionHold > 0.0, scrub, yawRateError, imuError, accelerationG, latched);
   }
 }

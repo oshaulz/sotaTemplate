@@ -151,7 +151,7 @@ Until a tag is seen, heading is assumed to face away from your driver station (o
 
 - **Scrub:** the four modules disagree with the best rigid-body fit (a wheel sliding or spinning).
 - **Yaw rate:** wheels and gyro disagree on turn rate.
-- **Accelerometer:** wheel velocity disagrees with the IMU's. The IMU velocity follows the wheels only while their accelerations agree and neither check above fires, so it catches hits and releases; vision handles the steady state.
+- **Accelerometer:** wheel velocity disagrees with the IMU's. An event (accelerations disagree, or a check above fires) is latched, and the IMU velocity stops following the wheels until the two agree again, the wheels stop, or `Traction/MaxLatchSecs` (5 s) passes. A pin stays flagged the whole time, and honest wheels aren't flagged after release.
 
 A collision (acceleration above `Traction/CollisionThresholdG`) is logged separately, not as slip.
 
@@ -327,6 +327,7 @@ Values go through AdvantageKit's `LoggedNetworkNumber`, so they are logged as in
 | `OpModeTest` | Boots the real `Robot`, selects OpModes and presses buttons through `DriverStationSim`. Covers field-relative teleop, no duplicate bindings across disable and enable, the superstructure state machine on the Talon-sim intake, all autos finishing on target, the `Path Two Piece` auto pinned mid-path with its wheels spinning (slip detected, cleared on release, pose recovered, both pieces scored), teleop auto-drive on the Y button, and the teleop acceleration limit. |
 | `CameraBackendTest` | Limelight (with real lens distortion and corners in a scrambled order), PhotonVision (its own `VisionSystemSim`, including a tag 35° off-axis) and the template's sim camera, all checked against known geometry: corner order and position, bearing sign, range, and timestamp timebase. A field-wide sweep also checks that the sim camera never reports a tag seen from behind. |
 | `TagQCTest` | Each QC rule, and canonical corner ordering, including tags seen nearly edge-on |
+| `TractionMonitorTest` | Scripted drives, no HAL: a pin with only the accelerometer to see it (flagged throughout, cleared on release), 0.03 g of accelerometer bias (never flags), a one-sample glitch and a pin past the latch cap (never stuck) |
 | `LocalizationBenchmark` | Not part of `build`; run with `./gradlew benchmark` |
 
 `RobotHarness` runs the real `LoggedOpModeRobot` loop on a background thread and advances paused HAL time only while that thread is parked between loops. Every step is therefore exactly one complete loop, and tests never read half-written state. Use it to test your own OpModes.

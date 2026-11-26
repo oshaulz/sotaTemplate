@@ -97,7 +97,7 @@ public class Drive implements Mechanism {
   private final TractionMonitor traction = new TractionMonitor(kinematics);
   private ChassisVelocities lastCommandedVelocity = new ChassisVelocities();
   private TractionMonitor.Result tractionResult =
-      new TractionMonitor.Result(false, false, 0.0, 0.0, 0.0, 0.0);
+      new TractionMonitor.Result(false, false, 0.0, 0.0, 0.0, 0.0, false);
 
   public Drive(
       GyroIO gyroIO,
@@ -159,6 +159,7 @@ public class Drive implements Mechanism {
         "Drive/Traction/ImuVelocityErrorMetersPerSec",
         tractionResult.imuVelocityErrorMetersPerSec());
     Logger.recordOutput("Drive/Traction/AccelerationG", tractionResult.accelerationG());
+    Logger.recordOutput("Drive/Traction/EventLatched", tractionResult.eventLatched());
 
     // Integrate raw odometry at the full sample rate
     odometrySamples.clear();
