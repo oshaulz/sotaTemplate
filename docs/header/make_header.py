@@ -30,10 +30,10 @@ EDGE = "#5b46a8"  # Purple, dimmed for the field's edge
 
 # ---- Camera ------------------------------------------------------------------------------------
 
-EYE = (-2.0, -8.5, 3.0)
-TARGET = (9.8, 4.0, 0.8)
-FOCAL = 1250.0
-CX, CY = 930.0, 160.0
+EYE = (1.0, -9.5, 3.6)
+TARGET = (11.0, 4.0, 0.6)
+FOCAL = 1150.0
+CX, CY = 860.0, 175.0
 
 
 def sub(a, b):
@@ -73,13 +73,31 @@ def pts(ps):
     return " ".join(f"{f(x)},{f(y)}" for x, y in (project(p) for p in ps))
 
 
-def line(a, b, color, width=1.0, opacity=1.0, dash=None):
+# Neon glow from wide, faint strokes under each crisp one. Pure vector, so it stays sharp at any
+# size; an SVG blur filter is rasterized at the file's size and goes soft on high-DPI screens.
+GLOW = ((5.0, 0.07), (2.6, 0.16))
+
+
+def line(a, b, color, width=1.0, opacity=1.0, dash=None, glow=False):
     pa, pb = project(a), project(b)
     extra = f' stroke-dasharray="{dash}"' if dash else ""
-    return (
+    layers = [(width * k, opacity * o) for k, o in GLOW] if glow else []
+    return "".join(
         f'<line x1="{f(pa[0])}" y1="{f(pa[1])}" x2="{f(pb[0])}" y2="{f(pb[1])}" '
-        f'stroke="{color}" stroke-width="{width}" opacity="{opacity}" '
+        f'stroke="{color}" stroke-width="{w:.2f}" opacity="{o:.3f}" '
         f'stroke-linecap="round"{extra}/>'
+        for w, o in layers + [(width, opacity)]
+    )
+
+
+def shape(kind, ps, color, width=1.0, opacity=1.0, dash=None, glow=False):
+    """An outlined polyline or polygon in 3D, optionally glowing."""
+    extra = f' stroke-dasharray="{dash}"' if dash else ""
+    layers = [(width * k, opacity * o) for k, o in GLOW] if glow else []
+    return "".join(
+        f'<{kind} points="{pts(ps)}" fill="none" stroke="{color}" stroke-width="{w:.2f}" '
+        f'opacity="{o:.3f}" stroke-linejoin="round"{extra}/>'
+        for w, o in layers + [(width, opacity)]
     )
 
 
@@ -87,13 +105,52 @@ def footprint(x, y, yaw, size, z=0.01):
     """A robot's square footprint on the carpet, with a nose tick, as world points."""
     c, s = math.cos(yaw), math.sin(yaw)
     h = size / 2
-    sq = [(x + c * u - s * v, y + s * u + c * v, z) for u, v in ((h, h), (-h, h), (-h, -h), (h, -h))]
+    square = ((h, h), (-h, h), (-h, -h), (h, -h))
+    sq = [(x + c * u - s * v, y + s * u + c * v, z) for u, v in square]
     nose = ((x + c * h * 0.4, y + s * h * 0.4, z), (x + c * h * 1.25, y + s * h * 1.25, z))
     return sq, nose
 
 
 CAMERA_HEIGHT = 0.25
 CAMERA_FOV = math.radians(90)
+CAMERA_RANGE = 10.0
+
+# The real 2026 FRC field (REBUILT, welded): WPILib's 2026-rebuilt-welded.json, as
+# (id, x, y, z, yaw in degrees). The layout gives tags only, so the field elements below are
+# outlined from where their tags sit.
+FIELD_LENGTH, FIELD_WIDTH = 16.541, 8.069
+
+# Each alliance's barrier, wall to wall: trench, bump, hub, bump, trench. Dimensions from the 2026
+# Game Manual (section 5) where it gives them; "est." marks ones read off its figures.
+HUB_X = (4.022, 11.312)  # Faces of each hub, from its tags
+HUB_SIZE = 1.207  # 47 in square, plus its tag panels
+HUB_Y = (3.431, 4.638)
+HUB_HEIGHT = 1.35  # The body (est.)...
+FUNNEL_TOP = 1.83  # ...then a hexagonal hopper flaring out to an opening 72 in off the carpet,
+FUNNEL_RIM = 0.612  # 41.7 in across its flats,
+FUNNEL_BASE = 0.34  # from a narrower base (est.)
+TRENCH_X = (4.626, 11.916)  # Center of each arm: its two tags sit back to back
+TRENCH_OPENING, TRENCH_WIDTH = 1.279, 1.668  # From the guardrail: the opening, then a pedestal
+TRENCH_CLEARANCE, TRENCH_ARM = 0.565, 0.1  # 22.25 in under the arm; the arm (est.)
+TRENCH_DEPTH, TRENCH_TOP = 1.194, 1.022  # 47 in deep at the pedestal; 40.25 in tall overall
+TAG_PANEL = 0.267  # 10.5 in square panels hold the tags
+BUMP_LENGTH, BUMP_DEPTH, BUMP_HEIGHT = 1.854, 1.128, 0.1654  # A ridge of two 15 degree ramps
+WALL_HEIGHT, WALL_PANEL = 0.508, 1.5  # Guardrails: 20 in of clear polycarbonate, and a rail
+DS_BASE, DS_TOP = 0.935, 2.0  # Driver stations: diamond plate base, then a clear sheet and rail
+FIELD_TAGS = [
+    (1, 11.878, 7.425, 0.889, 180), (2, 11.915, 4.638, 1.124, 90), (3, 11.312, 4.390, 1.124, 180),
+    (4, 11.312, 4.035, 1.124, 180), (5, 11.915, 3.431, 1.124, -90), (6, 11.878, 0.644, 0.889, 180),
+    (7, 11.953, 0.644, 0.889, 0), (8, 12.271, 3.431, 1.124, -90), (9, 12.519, 3.679, 1.124, 0),
+    (10, 12.519, 4.035, 1.124, 0), (11, 12.271, 4.638, 1.124, 90), (12, 11.953, 7.425, 0.889, 0),
+    (13, 16.533, 7.403, 0.552, 180), (14, 16.533, 6.972, 0.552, 180),
+    (15, 16.533, 4.324, 0.552, 180), (16, 16.533, 3.892, 0.552, 180),
+    (17, 4.663, 0.644, 0.889, 0), (18, 4.626, 3.431, 1.124, -90), (19, 5.229, 3.679, 1.124, 0),
+    (20, 5.229, 4.035, 1.124, 0), (21, 4.626, 4.638, 1.124, 90), (22, 4.663, 7.425, 0.889, 0),
+    (23, 4.588, 7.425, 0.889, 180), (24, 4.270, 4.638, 1.124, 90), (25, 4.022, 4.390, 1.124, 180),
+    (26, 4.022, 4.035, 1.124, 180), (27, 4.270, 3.431, 1.124, -90), (28, 4.588, 0.644, 0.889, 180),
+    (29, 0.008, 0.666, 0.552, 0), (30, 0.008, 1.098, 0.552, 0), (31, 0.008, 3.746, 0.552, 0),
+    (32, 0.008, 4.178, 0.552, 0),
+]
 
 
 def robot(x, y, yaw, color, width, opacity=1.0, dash=None, cameras=False):
@@ -113,9 +170,9 @@ def robot(x, y, yaw, color, width, opacity=1.0, dash=None, cameras=False):
     hi = [at(u, v, z1) for u, v in ((h, h), (-h, h), (-h, -h), (h, -h))]
     for i in range(4):
         j = (i + 1) % 4
-        out.append(line(lo[i], lo[j], color, width, opacity, dash))
-        out.append(line(hi[i], hi[j], color, width, opacity, dash))
-        out.append(line(lo[i], hi[i], color, width, opacity, dash))
+        out.append(line(lo[i], lo[j], color, width, opacity, dash, glow=dash is None))
+        out.append(line(hi[i], hi[j], color, width, opacity, dash, glow=dash is None))
+        out.append(line(lo[i], hi[i], color, width, opacity, dash, glow=dash is None))
     frame = [at(u, v, z1) for u, v in ((0.33, 0.33), (-0.33, 0.33), (-0.33, -0.33), (0.33, -0.33))]
     for i in range(4):
         out.append(line(frame[i], frame[(i + 1) % 4], color, width * 0.6, opacity * 0.7, dash))
@@ -143,15 +200,19 @@ def robot(x, y, yaw, color, width, opacity=1.0, dash=None, cameras=False):
             out.append(line(body[i], body[j], color, width * 0.6, opacity))
             out.append(line(body[i + 4], body[j + 4], color, width * 0.6, opacity))
             out.append(line(body[i], body[i + 4], color, width * 0.6, opacity))
-        far = [cam(0.2, u, v) for u, v in ((0.11, 0.07), (-0.11, 0.07), (-0.11, -0.07), (0.11, -0.07))]
+        view = ((0.11, 0.07), (-0.11, 0.07), (-0.11, -0.07), (0.11, -0.07))
+        far = [cam(0.2, u, v) for u, v in view]
         for i in range(4):
             out.append(line(pos, far[i], color, width * 0.5, opacity * 0.8))
             out.append(line(far[i], far[(i + 1) % 4], color, width * 0.5, opacity * 0.8))
     return out, mounts
 
 
-def tag(center, yaw, size, code):
-    """A filled AprilTag facing yaw: white margin, black border, a 4x4 code. Returns corners."""
+def tag(center, yaw, size, code, post=False):
+    """
+    A filled AprilTag facing yaw, laid out like 36h11: a 10 x 10 grid of a white margin, a black
+    border and 6 x 6 data cells. Returns the black square's corners.
+    """
     nx, ny = math.cos(yaw), math.sin(yaw)
     ux, uy = -ny, nx  # Across the face, horizontally
     cx, cy, cz = center
@@ -167,23 +228,183 @@ def tag(center, yaw, size, code):
         quad = [at(u0, v0), at(u0 + step, v0), at(u0 + step, v0 + step), at(u0, v0 + step)]
         return f'<polygon points="{pts(quad)}" fill="{color}"/>'
 
-    out = [cell(0, 0, 1, WHITE)]
-    inner = [at(-h * 0.75, -h * 0.75), at(h * 0.75, -h * 0.75), at(h * 0.75, h * 0.75),
-             at(-h * 0.75, h * 0.75)]
-    out.append(f'<polygon points="{pts(inner)}" fill="{BLACK}"/>')
-    for i in range(4):
-        for j in range(4):
-            if code[i * 4 + j]:
-                out.append(cell(i + 2, j + 2, 8, WHITE))
-    out.append(line((cx, cy, 0.0), (cx, cy, cz - h), GREY, 1.0, 0.4))
+    b = h * 0.8
+    inner = [at(-b, -b), at(b, -b), at(b, b), at(-b, b)]
+    if nx * (EYE[0] - cx) + ny * (EYE[1] - cy) <= 0:
+        return [], inner  # Seen from behind: hidden by whatever it's mounted on
+    out = [cell(0, 0, 1, WHITE), f'<polygon points="{pts(inner)}" fill="{BLACK}"/>']
+    for i in range(6):
+        for j in range(6):
+            if code[i * 6 + j]:
+                out.append(cell(i + 2, j + 2, 10, WHITE))
+    if post:
+        out.append(line((cx, cy, 0.0), (cx, cy, cz - h), GREY, 1.0, 0.4))
     # The detector measures the black square's corners, not the white margin's
     return out, inner
 
 
+def prism(center, radius, height, sides, rotation, color, opacity):
+    """A field element in outline: a regular prism standing on the carpet."""
+    cx, cy = center
+    ring = [(cx + radius * math.cos(rotation + 2 * math.pi * k / sides),
+             cy + radius * math.sin(rotation + 2 * math.pi * k / sides)) for k in range(sides)]
+    out = []
+    for k in range(sides):
+        a, b = ring[k], ring[(k + 1) % sides]
+        out.append(line((*a, 0.0), (*b, 0.0), color, 1.0, opacity))
+        out.append(line((*a, height), (*b, height), color, 1.0, opacity))
+        out.append(line((*a, 0.0), (*a, height), color, 0.8, opacity * 0.8))
+    return out
+
+
+def blocked(a, b):
+    """Whether a hub stands between two points (in plan; hubs are taller than any sightline)."""
+    for x0 in HUB_X:
+        # Shrunk a little, so a tag on the hub's own face doesn't block itself
+        lo = (x0 + 0.02, HUB_Y[0] + 0.02)
+        hi = (x0 + HUB_SIZE - 0.02, HUB_Y[1] - 0.02)
+        t0, t1 = 0.0, 1.0
+        for axis in (0, 1):
+            d = b[axis] - a[axis]
+            if abs(d) < 1e-9:
+                if not lo[axis] <= a[axis] <= hi[axis]:
+                    break
+                continue
+            ta, tb = (lo[axis] - a[axis]) / d, (hi[axis] - a[axis]) / d
+            t0, t1 = max(t0, min(ta, tb)), min(t1, max(ta, tb))
+        else:
+            if t0 <= t1:
+                return True
+    return False
+
+
+def tags_in_view(pos, cam_yaw, tags):
+    """The tags a camera at pos, looking along cam_yaw, can see the front of: in its field of view
+    and range, and not behind a hub."""
+    seen = []
+    for k, (center, yaw) in enumerate(tags):
+        bearing = math.atan2(center[1] - pos[1], center[0] - pos[0]) - cam_yaw
+        facing = math.cos(yaw) * (pos[0] - center[0]) + math.sin(yaw) * (pos[1] - center[1])
+        in_fov = abs(math.atan2(math.sin(bearing), math.cos(bearing))) <= CAMERA_FOV / 2
+        in_range = math.dist(pos[:2], center[:2]) <= CAMERA_RANGE
+        if in_fov and facing > 0 and in_range and not blocked(pos, center):
+            seen.append(k)
+    return seen
+
+
+def solid(faces, color, opacity):
+    """
+    A convex solid in outline. Its front faces are filled with the background's black, so it hides
+    whatever is behind it without adding any color; faces are wound counter-clockwise from outside.
+    """
+    visible = []
+    for face in faces:
+        normal = cross(sub(face[1], face[0]), sub(face[2], face[0]))
+        if dot(normal, sub(EYE, face[0])) > 0:
+            # Far to near, so a part nearer the viewer is drawn over one behind it
+            center = tuple(sum(v[i] for v in face) / len(face) for i in range(3))
+            visible.append((math.dist(EYE, center), face))
+    return [
+        f'<polygon points="{pts(face)}" fill="{BLACK}" stroke="{color}" '
+        f'stroke-width="1" stroke-opacity="{opacity}" stroke-linejoin="round"/>'
+        for _, face in sorted(visible, key=lambda v: -v[0])
+    ]
+
+
+def box(x0, x1, y0, y1, z0, z1):
+    """The faces of an axis-aligned box."""
+    return [
+        [(x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0)],
+        [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)],
+        [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)],
+        [(x0, y1, z0), (x0, y1, z1), (x1, y1, z1), (x1, y1, z0)],
+        [(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)],
+        [(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)],
+    ]
+
+
+def bump(cx, y0, y1):
+    """The faces of a bump: a ramp up to a ridge and straight down again, from y0 to y1."""
+    b, h = BUMP_DEPTH / 2, BUMP_HEIGHT
+    return [
+        [(cx + b, y0, 0), (cx + b, y1, 0), (cx, y1, h), (cx, y0, h)],
+        [(cx - b, y0, 0), (cx, y0, h), (cx, y1, h), (cx - b, y1, 0)],
+        [(cx - b, y0, 0), (cx + b, y0, 0), (cx, y0, h)],
+        [(cx - b, y1, 0), (cx, y1, h), (cx + b, y1, 0)],
+    ]
+
+
+def side_wall(y):
+    """A side wall of the perimeter. It's clear, so it's drawn as its frame: rail, base, posts."""
+    out = [
+        line((0, y, WALL_HEIGHT), (FIELD_LENGTH, y, WALL_HEIGHT), EDGE, 1.4, 0.95, glow=True),
+        line((0, y, 0), (FIELD_LENGTH, y, 0), EDGE, 1.0, 0.7),
+    ]
+    posts = round(FIELD_LENGTH / WALL_PANEL)
+    for k in range(posts + 1):
+        x = FIELD_LENGTH * k / posts
+        out.append(line((x, y, 0), (x, y, WALL_HEIGHT), EDGE, 0.9, 0.6))
+    return out
+
+
+def funnel(cx, cy):
+    """The faces of the hub's hexagonal hopper, flaring outward, and the outline of its open rim."""
+
+    def ring(radius, z):
+        # Corners point along the field's width, as in the manual's top view
+        angles = [math.pi / 2 + math.pi * k / 3 for k in range(6)]
+        return [(cx + radius * math.cos(a), cy + radius * math.sin(a), z) for a in angles]
+
+    lo, hi = ring(FUNNEL_BASE, HUB_HEIGHT), ring(FUNNEL_RIM, FUNNEL_TOP)
+    faces = [[lo[k], lo[(k + 1) % 6], hi[(k + 1) % 6], hi[k]] for k in range(6)]
+    # The top is open: the whole rim shows, its far edges through the opening
+    return faces, [shape("polygon", hi, EDGE, 1.2, 0.9, glow=True)]
+
+
+def trench(cx, side):
+    """
+    The faces of a trench, from the guardrail at y = 0 (side 1) or the far one (side -1): an arm
+    over the opening, the bracket for its tags on top, and the pedestal beyond. Returns the faces
+    and the opening's center.
+    """
+    def y(d):
+        return d if side > 0 else FIELD_WIDTH - d
+
+    def span(d0, d1):
+        return min(y(d0), y(d1)), max(y(d0), y(d1))
+
+    arm = box(cx - TRENCH_ARM / 2, cx + TRENCH_ARM / 2, *span(0.0, TRENCH_WIDTH),
+              TRENCH_CLEARANCE, TRENCH_CLEARANCE + TRENCH_ARM)
+    mid = TRENCH_OPENING / 2
+    bracket = box(cx - 0.0375, cx + 0.0375, *span(mid - TAG_PANEL / 2, mid + TAG_PANEL / 2),
+                  TRENCH_CLEARANCE + TRENCH_ARM, TRENCH_TOP)
+    # The pedestal: sloped front and back, like a squat ridge, between the opening and the bump
+    y0, y1 = span(TRENCH_OPENING, TRENCH_WIDTH)
+    b, t, h = TRENCH_DEPTH / 2, 0.15, TRENCH_CLEARANCE + TRENCH_ARM
+    pedestal = [
+        [(cx - t, y0, h), (cx + t, y0, h), (cx + t, y1, h), (cx - t, y1, h)],
+        [(cx + b, y0, 0), (cx + b, y1, 0), (cx + t, y1, h), (cx + t, y0, h)],
+        [(cx - b, y0, 0), (cx - t, y0, h), (cx - t, y1, h), (cx - b, y1, 0)],
+        [(cx - b, y0, 0), (cx + b, y0, 0), (cx + t, y0, h), (cx - t, y0, h)],
+        [(cx - b, y1, 0), (cx - t, y1, h), (cx + t, y1, h), (cx + b, y1, 0)],
+    ]
+    return arm + bracket + pedestal, y(mid)
+
+
+def driver_station_glass(x):
+    """The clear sheet above an alliance wall's base: its frame, rail and station dividers."""
+    out = [line((x, 0, DS_TOP), (x, FIELD_WIDTH, DS_TOP), EDGE, 1.3, 0.9, glow=True),
+           line((x, 0, DS_BASE), (x, FIELD_WIDTH, DS_BASE), EDGE, 1.0, 0.7)]
+    for k in range(4):
+        y = FIELD_WIDTH * k / 3
+        out.append(line((x, y, DS_BASE), (x, y, DS_TOP), EDGE, 1.0, 0.7))
+    return out
+
+
 def path(t):
-    """The robot's true path across the field, t in [0, 1]."""
-    x = 2.6 + 5.4 * t
-    y = 0.2 + 3.0 * t + 0.6 * math.sin(math.pi * 1.7 * t)
+    """The robot's true path, t in [0, 1]: across midfield toward the red hub."""
+    x = 6.0 + 3.6 * t
+    y = 0.9 + 2.2 * t + 0.4 * math.sin(math.pi * 1.7 * t)
     return x, y
 
 
@@ -201,71 +422,75 @@ def main():
         "<defs>",
         f'<linearGradient id="veil" x1="0" x2="1">'
         f'<stop offset="0" stop-color="{BLACK}" stop-opacity="1"/>'
-        f'<stop offset="0.3" stop-color="{BLACK}" stop-opacity="0.9"/>'
-        f'<stop offset="0.48" stop-color="{BLACK}" stop-opacity="0"/></linearGradient>',
-        '<filter id="glow" x="-10%" y="-10%" width="120%" height="120%">'
-        '<feGaussianBlur stdDeviation="2" result="b"/>'
-        '<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
+        f'<stop offset="0.22" stop-color="{BLACK}" stop-opacity="0.85"/>'
+        f'<stop offset="0.42" stop-color="{BLACK}" stop-opacity="0"/></linearGradient>',
         "</defs>",
         f'<rect width="{W}" height="{H}" fill="{BLACK}"/>',
     ]
 
-    svg.append('<g filter="url(#glow)">')
-
     # ---- Carpet grid, fading toward the far wall, and the field's edge ----
     for gx in range(0, 17):
-        svg.append(line((gx, -2.0, 0), (gx, 8.2, 0), GRID, 1.0, max(0.2, 1 - gx / 20)))
-    for gy in range(-2, 9):
-        svg.append(line((0, gy, 0), (16.5, gy, 0), GRID, 1.0, max(0.2, 1 - (gy + 2) / 13)))
-    edge = [(0, -2.0, 0), (16.5, -2.0, 0), (16.5, 8.2, 0), (0, 8.2, 0)]
-    wall = [(x, y, 0.5) for x, y, _ in edge]
-    for i in range(4):
-        j = (i + 1) % 4
-        svg.append(line(edge[i], edge[j], EDGE, 1.0, 0.6))
-        svg.append(line(wall[i], wall[j], EDGE, 0.8, 0.35))
-        svg.append(line(edge[i], wall[i], EDGE, 0.8, 0.35))
+        svg.append(line((gx, 0, 0), (gx, FIELD_WIDTH, 0), GRID, 1.0, max(0.2, 1 - gx / 20)))
+    for gy in range(0, 9):
+        svg.append(line((0, gy, 0), (FIELD_LENGTH, gy, 0), GRID, 1.0, max(0.2, 1 - gy / 11)))
+    # The far side wall is behind everything; the near one is drawn last, in front
+    svg.extend(side_wall(FIELD_WIDTH))
 
-    # ---- Tags on posts around the field, facing in ----
-    tags = [
-        ((13.6, 2.6, 0.9), math.radians(175)),
-        ((8.8, 7.6, 1.2), math.radians(-100)),
-        ((15.6, 5.6, 1.1), math.radians(-170)),
-    ]
-    codes = [
-        [0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0],
-        [1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1],
-        [0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1],
-    ]
-    tag_corners = []
-    svg.append("</g>")
+    # ---- Every tag on the real field ----
+    tags = [((x, y, z), math.radians(yaw)) for _, x, y, z, yaw in FIELD_TAGS]
+    codes = [[(tid * 0x9E3779B97F4A7C15 >> k) & 1 for k in range(36)] for tid, *_ in FIELD_TAGS]
+    tag_svg, tag_corners = [], []
     for (center, yaw), code in zip(tags, codes):
-        # True scale: a 6.5 in (0.165 m) black square, about 8.7 in with its white margin
-        s, corners = tag(center, yaw, 0.165 / 0.75, code)
-        svg.extend(s)
+        # True scale: 8.125 in overall, a 6.5 in black square
+        s, corners = tag(center, yaw, 0.2064, code)
+        tag_svg.append(s)
         tag_corners.append(corners)
 
-    svg.append('<g filter="url(#glow)">')
+    # ---- Field elements, drawn far to near, each with the tags mounted on it ----
+    elements = []  # (faces, center, anything drawn on top)
+    for x in (0.0, FIELD_LENGTH):  # Alliance walls: a solid base, then clear glass
+        base = box(x - 0.01, x + 0.01, 0.0, FIELD_WIDTH, 0.0, DS_BASE)
+        elements.append((base, (x, FIELD_WIDTH / 2), driver_station_glass(x)))
+    for x0, cx in zip(HUB_X, TRENCH_X):
+        cone, extras = funnel(x0 + HUB_SIZE / 2, sum(HUB_Y) / 2)
+        body = box(x0, x0 + HUB_SIZE, *HUB_Y, 0.0, HUB_HEIGHT)
+        elements.append((body + cone, (cx, sum(HUB_Y) / 2), extras))
+        for y0, y1 in ((HUB_Y[0] - BUMP_LENGTH, HUB_Y[0]), (HUB_Y[1], HUB_Y[1] + BUMP_LENGTH)):
+            elements.append((bump(cx, y0, y1), (cx, (y0 + y1) / 2), []))
+        for side in (1, -1):
+            faces, yc = trench(cx, side)
+            elements.append((faces, (cx, yc), []))
+
+    def owner(center):
+        """The element a tag is mounted on: the nearest, in plan."""
+        return min(range(len(elements)),
+                   key=lambda e: math.dist(center[:2], elements[e][1]))
+
+    mounted = {e: [] for e in range(len(elements))}
+    for k, (center, _) in enumerate(tags):
+        mounted[owner(center)].append(k)
+    for e in sorted(range(len(elements)),
+                    key=lambda e: -math.dist(EYE[:2], elements[e][1])):
+        svg.extend(solid(elements[e][0], EDGE, 0.75))
+        svg.extend(elements[e][2])
+        for k in mounted[e]:
+            svg.extend(tag_svg[k])
 
     # ---- Raw odometry drifts away; its ghost robot ends up beside the real one ----
     t_end = 0.97
     odo = [path(k / 59 * t_end) for k in range(60)]
     odo = [(x + 0.3 * k / 59, y - 1.0 * (k / 59) ** 2, 0.01) for k, (x, y) in enumerate(odo)]
-    svg.append(
-        f'<polyline points="{pts(odo)}" fill="none" stroke="{GREY}" stroke-width="1.1" '
-        f'stroke-dasharray="4 5" opacity="0.7"/>'
-    )
+    svg.append(shape("polyline", odo, GREY, 1.1, 0.7, dash="4 5"))
     gx, gy, _ = odo[-1]
     ghost, _ = robot(gx, gy, heading(t_end) - 0.25, GREY, 1.0, 0.6, dash="3 4")
     svg.extend(ghost)
 
     # ---- Past poses: footprints and uncertainty, growing blind, collapsing on a sighting ----
     est = [(*path(k / 59 * t_end), 0.01) for k in range(60)]
-    svg.append(
-        f'<polyline points="{pts(est)}" fill="none" stroke="{YELLOW}" stroke-width="1.4" '
-        f'opacity="0.85"/>'
-    )
+    svg.append(shape("polyline", est, YELLOW, 1.4, 0.85, glow=True))
     n = 11
-    seen = {0, 1, 6, 7, 10}
+    seen = {0, 1, 2, 6, 7, 8, 10}
+    web, nodes = [], []
     sigma = 0.08
     for i in range(n):
         t = i / (n - 1) * 0.86
@@ -273,20 +498,21 @@ def main():
         x, y = path(t)
         ring = [(x + sigma * 2.6 * math.cos(a), y + sigma * 2.6 * math.sin(a), 0.01)
                 for a in (2 * math.pi * k / 32 for k in range(32))]
-        svg.append(
-            f'<polygon points="{pts(ring)}" fill="none" stroke="{YELLOW}" '
-            f'stroke-opacity="0.6" stroke-width="0.9"/>'
-        )
+        svg.append(shape("polygon", ring, YELLOW, 0.9, 0.6))
         fade = 0.25 + 0.45 * i / (n - 1)
         sq, nose = footprint(x, y, heading(t), 0.84)
-        svg.append(
-            f'<polygon points="{pts(sq)}" fill="none" stroke="{CYAN}" stroke-width="1" '
-            f'opacity="{fade:.2f}" stroke-linejoin="round"/>'
-        )
+        svg.append(shape("polygon", sq, CYAN, 1.0, fade))
         svg.append(line(*nose, CYAN, 1.0, fade))
+        nodes.append(project((x, y, 0.01)))
+        # The factor graph: every sighting from this pose ties it to a tag
         if i in seen:
-            k = min(range(len(tags)), key=lambda q: math.dist((x, y), tags[q][0][:2]))
-            svg.append(line((x, y, CAMERA_HEIGHT), tags[k][0], PURPLE, 0.8, 0.25))
+            _, mounts = robot(x, y, heading(t), CYAN, 1.0, cameras=True)
+            for pos, cam_yaw in mounts:
+                for k in tags_in_view(pos, cam_yaw, tags):
+                    web.append(line(pos, tags[k][0], PURPLE, 0.6, 0.14))
+    svg.extend(web)
+    for nx, ny in nodes:
+        svg.append(f'<circle cx="{f(nx)}" cy="{f(ny)}" r="2.2" fill="{CYAN}"/>')
 
     # ---- The robot and its two cameras ----
     rx, ry = path(t_end)
@@ -295,33 +521,31 @@ def main():
 
     # ---- Rays from each camera to every corner of the tags in its view ----
     for pos, cam_yaw in cameras:
-        for (center, _), corners in zip(tags, tag_corners):
-            bearing = math.atan2(center[1] - pos[1], center[0] - pos[0]) - cam_yaw
-            if abs(math.atan2(math.sin(bearing), math.cos(bearing))) > CAMERA_FOV / 2:
-                continue
-            for corner in corners:
-                svg.append(line(pos, corner, PURPLE, 1.0, 0.85))
+        for k in tags_in_view(pos, cam_yaw, tags):
+            for corner in tag_corners[k]:
+                svg.append(line(pos, corner, PURPLE, 1.0, 0.85, glow=True))
                 p = project(corner)
                 svg.append(f'<circle cx="{f(p[0])}" cy="{f(p[1])}" r="2.3" fill="{PURPLE}"/>')
         c0 = project(pos)
         svg.append(f'<circle cx="{f(c0[0])}" cy="{f(c0[1])}" r="2.8" fill="{PURPLE}"/>')
-    svg.append("</g>")
 
-    # ---- Wordmark over a veil of dark ----
+    svg.extend(side_wall(0.0))
+
+    # ---- Wordmark over a veil of dark, each line outlined in black so the scene never crowds it
     svg.append(f'<rect width="{W}" height="{H}" fill="url(#veil)"/>')
-    svg.append(
-        f'<text x="72" y="168" fill="{WHITE}" font-family="{FONT}" font-size="76" '
-        f'font-weight="700" letter-spacing="-2">sota<tspan font-weight="300">Template</tspan>'
-        f"</text>"
-    )
-    svg.append(
-        f'<text x="76" y="212" fill="{WHITE}" font-family="{FONT}" font-size="24" '
-        f'font-weight="400">FRC swerve with built-in SLAM</text>'
-    )
-    svg.append(
-        f'<text x="76" y="246" fill="{GREY}" font-family="{FONT}" font-size="15" '
-        f'font-weight="400">For 2027 Systemcore, with Commands v3, AdvantageKit and BLine</text>'
-    )
+
+    def text(x, y, size, weight, color, content):
+        return (
+            f'<text x="{x}" y="{y}" fill="{color}" stroke="{BLACK}" stroke-width="6" '
+            f'stroke-linejoin="round" paint-order="stroke" font-family="{FONT}" '
+            f'font-size="{size}" font-weight="{weight}"{content}</text>'
+        )
+
+    svg.append(text(72, 168, 76, 700, WHITE,
+                    ' letter-spacing="-2">sota<tspan font-weight="300">Template</tspan>'))
+    svg.append(text(76, 212, 24, 400, WHITE, ">FRC swerve with built-in SLAM"))
+    svg.append(text(76, 246, 15, 400, GREY,
+                    ">For 2027 Systemcore, with Commands v3, AdvantageKit and BLine"))
     svg.append("</svg>")
 
     out = Path(__file__).with_name("sota-github-header.svg")
